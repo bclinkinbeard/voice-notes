@@ -238,6 +238,19 @@ header {
   opacity: 0.7;
 }
 
+.transcription-input {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  resize: vertical;
+  margin-top: 8px;
+}
+
 /* ========================================
    Empty State
    ======================================== */

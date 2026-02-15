@@ -263,80 +263,53 @@ function stopTranscription() {
   });
 }
 
-// --- Transcribe by Playing Audio Aloud ---
+// --- Manual Transcription Input ---
 
-function transcribeViaPlayback(note, transcribeBtn, transcriptionEl) {
-  if (!SpeechRecognition) return;
+function showTranscriptionInput(note, transcribeBtn, transcriptionEl) {
+  const input = document.createElement('textarea');
+  input.className = 'transcription-input';
+  input.placeholder = 'Play the note, then type what you hear…';
+  input.rows = 3;
 
-  stopCurrentPlayback();
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'play-btn';
+  saveBtn.textContent = 'Save';
 
-  transcribeBtn.textContent = 'Transcribing…';
-  transcribeBtn.disabled = true;
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'delete-btn';
+  cancelBtn.textContent = 'Cancel';
 
-  let result = '';
-  const url = URL.createObjectURL(note.audioBlob);
-  const audio = new Audio(url);
-  audio.volume = 1.0;
+  const btnRow = document.createElement('div');
+  btnRow.className = 'note-actions';
+  btnRow.appendChild(saveBtn);
+  btnRow.appendChild(cancelBtn);
 
-  const recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = navigator.language || 'en-US';
+  transcribeBtn.replaceWith(input);
+  input.after(btnRow);
+  input.focus();
 
-  let settled = false;
-
-  function finish() {
-    if (settled) return;
-    settled = true;
-    URL.revokeObjectURL(url);
-    try { recognition.stop(); } catch (e) {}
-    audio.pause();
-
-    if (result) {
-      note.transcription = result;
-      saveNote(note).then(() => {
-        transcriptionEl.textContent = result;
-        transcriptionEl.classList.remove('note-transcription-empty');
-        transcribeBtn.remove();
-      }).catch(() => {
-        transcribeBtn.textContent = 'Transcribe';
-        transcribeBtn.disabled = false;
-      });
-    } else {
-      transcribeBtn.textContent = 'Transcribe';
-      transcribeBtn.disabled = false;
-    }
+  function teardown() {
+    btnRow.remove();
+    input.replaceWith(transcribeBtn);
   }
 
-  recognition.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        const text = e.results[i][0].transcript.trim();
-        if (text) {
-          result += (result ? ' ' : '') + text;
-        }
-      }
-    }
-  };
+  cancelBtn.addEventListener('click', teardown);
 
-  recognition.onerror = () => {};
-
-  audio.onended = () => {
-    setTimeout(finish, 1500);
-  };
-
-  audio.onerror = finish;
-
-  // Start audio playback FIRST so the user gesture is consumed by play().
-  // Then start recognition — it reuses the mic permission already granted.
-  audio.play().then(() => {
-    try {
-      recognition.start();
-    } catch (e) {
-      // Recognition unavailable — let audio finish, then clean up
-      audio.onended = finish;
-    }
-  }).catch(finish);
+  saveBtn.addEventListener('click', () => {
+    const text = input.value.trim();
+    if (!text) return;
+    note.transcription = text;
+    saveNote(note).then(() => {
+      transcriptionEl.textContent = text;
+      transcriptionEl.classList.remove('note-transcription-empty');
+      btnRow.remove();
+      input.remove();
+    }).catch(() => {
+      teardown();
+    });
+  });
 }
 
 // --- Audio Recording ---
@@ -484,13 +457,13 @@ function createNoteCard(note) {
   deleteBtn.className = 'delete-btn';
   deleteBtn.textContent = 'Delete';
 
-  if (!note.transcription && SpeechRecognition) {
+  if (!note.transcription) {
     const transcribeBtn = document.createElement('button');
     transcribeBtn.type = 'button';
     transcribeBtn.className = 'transcribe-btn';
     transcribeBtn.textContent = 'Transcribe';
     transcribeBtn.addEventListener('click', () => {
-      transcribeViaPlayback(note, transcribeBtn, transcriptionEl);
+      showTranscriptionInput(note, transcribeBtn, transcriptionEl);
     });
     actions.appendChild(transcribeBtn);
   }

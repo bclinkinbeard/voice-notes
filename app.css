@@ -80,6 +80,9 @@ header {
   margin-bottom: 16px;
   opacity: 0;
   transition: opacity 0.3s;
+  border-radius: 8px;
+  border: 1px solid var(--surface-2);
+  background: rgba(26, 26, 46, 0.8);
 }
 
 #recorder.recording #waveform {

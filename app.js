@@ -116,50 +116,55 @@ function startWaveform(stream) {
 
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioContext.createAnalyser();
-  analyser.fftSize = 128;
+  analyser.fftSize = 2048;
 
   const source = audioContext.createMediaStreamSource(stream);
   source.connect(analyser);
 
-  const bufferLength = analyser.frequencyBinCount;
+  const bufferLength = analyser.fftSize;
   const dataArray = new Uint8Array(bufferLength);
-  const barCount = 32;
   const ctx = waveformCtx;
   const dpr = window.devicePixelRatio || 1;
+  const W = 280;
+  const H = 64;
 
-  waveformCanvas.width = 280 * dpr;
-  waveformCanvas.height = 64 * dpr;
+  waveformCanvas.width = W * dpr;
+  waveformCanvas.height = H * dpr;
   ctx.scale(dpr, dpr);
 
   const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
 
   function draw() {
     waveformFrameId = requestAnimationFrame(draw);
-    analyser.getByteFrequencyData(dataArray);
+    analyser.getByteTimeDomainData(dataArray);
 
-    ctx.clearRect(0, 0, 280, 64);
+    ctx.fillStyle = 'rgba(26, 26, 46, 0.3)';
+    ctx.fillRect(0, 0, W, H);
 
-    const barWidth = 280 / barCount;
-    const gap = 2;
-    const step = Math.floor(bufferLength / barCount);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = accentColor;
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
 
-    for (let i = 0; i < barCount; i++) {
-      const value = dataArray[i * step] / 255;
-      const barHeight = Math.max(3, value * 58);
-      const x = i * barWidth;
-      const y = (64 - barHeight) / 2;
+    const sliceWidth = W / bufferLength;
+    let x = 0;
 
-      ctx.fillStyle = accentColor;
-      ctx.globalAlpha = 0.4 + value * 0.6;
-      ctx.beginPath();
-      if (ctx.roundRect) {
-        ctx.roundRect(x + gap / 2, y, barWidth - gap, barHeight, 2);
+    for (let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0;
+      const y = (v * H) / 2;
+
+      if (i === 0) {
+        ctx.moveTo(x, y);
       } else {
-        ctx.rect(x + gap / 2, y, barWidth - gap, barHeight);
+        ctx.lineTo(x, y);
       }
-      ctx.fill();
+      x += sliceWidth;
     }
-    ctx.globalAlpha = 1;
+
+    ctx.lineTo(W, H / 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
   draw();

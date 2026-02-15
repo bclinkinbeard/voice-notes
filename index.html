@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Voice Notes</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header>
+    <h1>Voice Notes</h1>
+  </header>
+
+  <main id="recorder">
+    <div id="timer">0:00</div>
+    <button id="record-btn" type="button" aria-label="Record">
+      <span id="record-icon"></span>
+    </button>
+    <p id="record-hint">Tap to record</p>
+  </main>
+
+  <section id="notes">
+    <h2>Saved Notes</h2>
+    <div id="notes-list"></div>
+    <p id="empty-state">No voice notes yet. Tap the button above to record one.</p>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

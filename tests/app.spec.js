@@ -1444,3 +1444,174 @@ test.describe("Microphone Persistence", () => {
     expect(appSource).toContain("acquireMicStream()");
   });
 });
+
+// ─── Recording Crash Prevention ─────────────────────────────────────────────
+
+test.describe("Recording Crash Prevention", () => {
+  test("source and analyser nodes are disconnected between recordings", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const appSource = await page.evaluate(async () => {
+      const resp = await fetch(window.location.origin + "/app.js");
+      return resp.text();
+    });
+
+    // stopRecording must disconnect both the source node and analyser
+    expect(appSource).toContain("src.disconnect()");
+    expect(appSource).toContain("anal.disconnect()");
+
+    // startRecording must clean up leftovers before creating new nodes
+    expect(appSource).toContain("sourceNode.disconnect()");
+
+    // Module state must track the source node so it can be disconnected
+    expect(appSource).toContain("let sourceNode = null");
+  });
+
+  test("record button is guarded against re-entrant clicks", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const appSource = await page.evaluate(async () => {
+      const resp = await fetch(window.location.origin + "/app.js");
+      return resp.text();
+    });
+
+    // There must be a busy guard that prevents concurrent startRecording calls
+    expect(appSource).toContain("recordBusy");
+    expect(appSource).toContain("if (recordBusy) return");
+  });
+});
+
+// ─── Real Recording Flow ────────────────────────────────────────────────────
+// Uses Chromium's fake audio device (--use-fake-device-for-media-stream) to
+// exercise the actual getUserMedia → MediaRecorder → stop → save path.
+
+test.describe("Real Recording Flow", () => {
+  test("first recording completes without errors", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["microphone"]);
+
+    const errors = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+    page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+
+    await page.goto("/");
+
+    const recordBtn = page.locator("#record-btn");
+    const hint = page.locator("#record-hint");
+
+    // Start recording
+    await recordBtn.click();
+
+    // Must actually enter recording state (not fail silently)
+    await expect(hint).toHaveText("Tap to stop", { timeout: 5000 });
+    await expect(recordBtn).toHaveClass(/recording/);
+
+    // Record for 1.5 seconds
+    await page.waitForTimeout(1500);
+
+    // Stop recording
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to record", { timeout: 5000 });
+    await expect(recordBtn).not.toHaveClass(/recording/);
+
+    // A note card should appear
+    await expect(page.locator(".note-card")).toHaveCount(1, { timeout: 5000 });
+
+    // No errors should have occurred
+    const realErrors = errors.filter(
+      (e) =>
+        !e.includes("Failed to load") &&
+        !e.includes("pipeline") &&
+        !e.includes("Model load timed out") &&
+        !e.includes("Transcription failed"),
+    );
+    expect(realErrors).toEqual([]);
+  });
+
+  test("second recording completes without errors", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["microphone"]);
+
+    const errors = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+    page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+
+    await page.goto("/");
+
+    const recordBtn = page.locator("#record-btn");
+    const hint = page.locator("#record-hint");
+
+    // --- First recording ---
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to stop", { timeout: 5000 });
+    await page.waitForTimeout(1000);
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to record", { timeout: 5000 });
+    await expect(page.locator(".note-card")).toHaveCount(1, { timeout: 5000 });
+
+    // --- Second recording (this is where the crash was) ---
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to stop", { timeout: 5000 });
+    await expect(recordBtn).toHaveClass(/recording/);
+    await page.waitForTimeout(1000);
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to record", { timeout: 5000 });
+
+    // Should now have 2 notes
+    await expect(page.locator(".note-card")).toHaveCount(2, { timeout: 5000 });
+
+    const realErrors = errors.filter(
+      (e) =>
+        !e.includes("Failed to load") &&
+        !e.includes("pipeline") &&
+        !e.includes("Model load timed out") &&
+        !e.includes("Transcription failed"),
+    );
+    expect(realErrors).toEqual([]);
+  });
+
+  test("three consecutive recordings all succeed", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["microphone"]);
+
+    const errors = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    await page.goto("/");
+
+    const recordBtn = page.locator("#record-btn");
+    const hint = page.locator("#record-hint");
+
+    for (let i = 0; i < 3; i++) {
+      await recordBtn.click();
+      await expect(hint).toHaveText("Tap to stop", { timeout: 5000 });
+      await page.waitForTimeout(1000);
+      await recordBtn.click();
+      await expect(hint).toHaveText("Tap to record", { timeout: 5000 });
+      await expect(page.locator(".note-card")).toHaveCount(i + 1, {
+        timeout: 5000,
+      });
+    }
+
+    const realErrors = errors.filter(
+      (e) =>
+        !e.includes("Failed to load") &&
+        !e.includes("pipeline") &&
+        !e.includes("Model load timed out") &&
+        !e.includes("Transcription failed"),
+    );
+    expect(realErrors).toEqual([]);
+  });
+});

@@ -364,6 +364,10 @@ let audioChunks = [];
 // cached stream stays alive and the browser doesn't re-prompt for permission.
 let persistentAudioCtx = null;
 let analyser = null;
+// The MediaStreamSource node feeding the analyser.  Kept as module state so we
+// can disconnect it in stopRecording and avoid piling up orphaned nodes on the
+// persistent AudioContext (which causes crashes on the second recording).
+let sourceNode = null;
 let recordingStartTime = null;
 let timerInterval = null;
 let animationFrameId = null;
@@ -392,12 +396,23 @@ async function acquireMicStream() {
 async function startRecording() {
   const stream = await acquireMicStream();
 
+  // Tear down any leftover Web Audio nodes from a previous session so they
+  // don't pile up on the persistent context and crash the browser.
+  if (sourceNode) {
+    try { sourceNode.disconnect(); } catch (_) {}
+    sourceNode = null;
+  }
+  if (analyser) {
+    try { analyser.disconnect(); } catch (_) {}
+    analyser = null;
+  }
+
   // Set up Web Audio analyser for waveform using the persistent context
   const ctx = getAudioContext();
-  const source = ctx.createMediaStreamSource(stream);
+  sourceNode = ctx.createMediaStreamSource(stream);
   analyser = ctx.createAnalyser();
   analyser.fftSize = 256;
-  source.connect(analyser);
+  sourceNode.connect(analyser);
 
   // Determine best supported MIME type; fall back gracefully.
   let mimeType = "";
@@ -438,12 +453,15 @@ function stopRecording() {
     const chunks = audioChunks;
     const startTime = recordingStartTime;
     const frameId = animationFrameId;
+    const src = sourceNode;
+    const anal = analyser;
 
     // Detach from module-level state immediately so a new recording
     // won't collide with this session's cleanup.
     mediaRecorder = null;
     audioChunks = [];
     analyser = null;
+    sourceNode = null;
     animationFrameId = null;
     recordingStartTime = null;
 
@@ -453,6 +471,11 @@ function stopRecording() {
       const duration = startTime
         ? Math.round((Date.now() - startTime) / 1000)
         : 0;
+
+      // Disconnect Web Audio nodes so they can be garbage-collected and don't
+      // conflict with nodes created in the next recording session.
+      if (src) { try { src.disconnect(); } catch (_) {} }
+      if (anal) { try { anal.disconnect(); } catch (_) {} }
 
       // Don't stop stream tracks — keep the mic grant alive for quick re-record.
       // Don't close the AudioContext — closing it kills the stream source and
@@ -554,54 +577,65 @@ const notesList = document.getElementById("notes-list");
 const emptyState = document.getElementById("empty-state");
 
 let isRecording = false;
+let recordBusy = false; // prevents re-entrant clicks while async work runs
 let currentlyPlaying = null;
 
 if (recordBtn) {
   recordBtn.addEventListener("click", async () => {
-    if (isRecording) {
-      // Stop
-      isRecording = false;
-      recordBtn.classList.remove("recording");
-      if (recordHint) recordHint.textContent = "Tap to record";
+    // Guard against double-clicks while getUserMedia or stopRecording is
+    // in-flight. Without this, two concurrent startRecording calls create
+    // duplicate MediaRecorders/AudioNodes and crash the app.
+    if (recordBusy) return;
+    recordBusy = true;
 
-      let result;
-      try {
-        result = await stopRecording();
-      } catch (err) {
-        console.error("Failed to stop recording:", err);
-      }
+    try {
+      if (isRecording) {
+        // Stop
+        isRecording = false;
+        recordBtn.classList.remove("recording");
+        if (recordHint) recordHint.textContent = "Tap to record";
 
-      if (result && result.duration > 0) {
-        const note = {
-          id: Date.now().toString(),
-          audioBlob: result.blob,
-          transcript: "",
-          duration: result.duration,
-          createdAt: new Date().toISOString(),
-        };
-
+        let result;
         try {
-          await saveNote(note);
+          result = await stopRecording();
         } catch (err) {
-          console.error("Failed to save note:", err);
-          return;
+          console.error("Failed to stop recording:", err);
         }
-        await renderNotes();
 
-        // Transcribe asynchronously — UI updates when done
-        enqueueTranscription(note.id, result.blob);
+        if (result && result.duration > 0) {
+          const note = {
+            id: Date.now().toString(),
+            audioBlob: result.blob,
+            transcript: "",
+            duration: result.duration,
+            createdAt: new Date().toISOString(),
+          };
+
+          try {
+            await saveNote(note);
+          } catch (err) {
+            console.error("Failed to save note:", err);
+            return;
+          }
+          await renderNotes();
+
+          // Transcribe asynchronously — UI updates when done
+          enqueueTranscription(note.id, result.blob);
+        }
+      } else {
+        // Start
+        try {
+          await startRecording();
+          isRecording = true;
+          recordBtn.classList.add("recording");
+          if (recordHint) recordHint.textContent = "Tap to stop";
+        } catch (err) {
+          console.error("Could not start recording:", err);
+          if (recordHint) recordHint.textContent = "Microphone access denied";
+        }
       }
-    } else {
-      // Start
-      try {
-        await startRecording();
-        isRecording = true;
-        recordBtn.classList.add("recording");
-        if (recordHint) recordHint.textContent = "Tap to stop";
-      } catch (err) {
-        console.error("Could not start recording:", err);
-        if (recordHint) recordHint.textContent = "Microphone access denied";
-      }
+    } finally {
+      recordBusy = false;
     }
   });
 }

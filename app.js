@@ -171,6 +171,13 @@ function enqueueTranscription(noteId, audioBlob) {
       const transcript = result.text.trim();
       await updateNoteTranscript(noteId, transcript);
       updateTranscriptInUI(noteId, transcript);
+
+      // Chain NLP analysis (non-blocking — failures won't affect transcription)
+      if (transcript) {
+        analyzeNote(noteId, transcript).catch((err) => {
+          console.error("NLP analysis failed for note", noteId, err);
+        });
+      }
     } catch (err) {
       console.error("Transcription failed for note", noteId, err);
       updateTranscriptInUI(noteId, null);
@@ -190,6 +197,61 @@ function updateTranscriptInUI(noteId, transcript) {
     el.className = "note-transcript empty";
     el.textContent = "Transcription failed";
   }
+}
+
+// ─── NLP Analysis (sentiment + tagging) ─────────────────────────────────────
+
+let sentimentClassifier = null;
+let sentimentLoadingPromise = null;
+
+function loadSentimentModel() {
+  if (sentimentClassifier) return Promise.resolve(sentimentClassifier);
+  if (sentimentLoadingPromise) return sentimentLoadingPromise;
+
+  sentimentLoadingPromise = pipeline(
+    "zero-shot-classification",
+    "Xenova/mobilebert-uncased-mnli",
+  )
+    .then((p) => {
+      sentimentClassifier = p;
+      return sentimentClassifier;
+    })
+    .catch((err) => {
+      console.error("Failed to load sentiment model:", err);
+      sentimentLoadingPromise = null;
+      throw err;
+    });
+
+  return sentimentLoadingPromise;
+}
+
+async function analyzeNote(noteId, transcript) {
+  // Keyword-based tagging (instant, no model needed)
+  const tags = tagTranscript(transcript);
+
+  // Sentiment analysis via zero-shot classification
+  let tone = "neutral";
+  try {
+    const classifier = await loadSentimentModel();
+    const result = await classifier(transcript, ["positive", "negative", "neutral"]);
+    const topLabel = result.labels[0];
+    const topScore = result.scores[0];
+
+    if (topScore > 0.5) {
+      if (topLabel === "positive") tone = "warm";
+      else if (topLabel === "negative") tone = "heavy";
+      // "neutral" stays as default
+    }
+  } catch (err) {
+    console.error("Sentiment analysis failed for note", noteId, err);
+    // Tone stays "neutral" on failure — non-blocking
+  }
+
+  // Persist results
+  await updateNoteFields(noteId, { tone, tags });
+
+  // Update UI
+  updateNoteAnalysis(noteId, tone, tags);
 }
 
 // ─── Audio Recorder ──────────────────────────────────────────────────────────
@@ -435,20 +497,43 @@ function createNoteCard(note) {
   card.dataset.id = note.id;
 
   const hasTranscript = note.transcript && note.transcript.length > 0;
-  let transcriptHTML;
+  const toneValue = note.tone || "neutral";
+  const hasTags = Array.isArray(note.tags);
+  const hasVisibleTags = hasTags && note.tags.length > 0;
 
+  let transcriptHTML;
   if (hasTranscript) {
     transcriptHTML = `<div class="note-transcript">${escapeHtml(note.transcript)}</div>`;
   } else {
     transcriptHTML = `<div class="note-transcript transcribing">Transcribing...</div>`;
   }
 
+  // Tags section
+  let tagsHTML = "";
+  if (hasTranscript && !hasTags) {
+    // Transcript exists but analysis not done yet
+    tagsHTML = `
+      <div class="note-tags analyzing">
+        <span class="analyzing-text">Analyzing...</span>
+      </div>`;
+  } else if (hasVisibleTags) {
+    const tagChips = note.tags
+      .slice(0, 3)
+      .map((t) => `<span class="note-tag">${escapeHtml(t)}</span>`)
+      .join("");
+    tagsHTML = `<div class="note-tags">${tagChips}</div>`;
+  }
+
   card.innerHTML = `
     <div class="note-header">
       <span class="note-date">${formatDate(note.createdAt)}</span>
-      <span class="note-duration">${formatDuration(note.duration)}</span>
+      <div class="note-header-right">
+        <span class="note-tone" data-tone="${toneValue}" aria-hidden="true"></span>
+        <span class="note-duration">${formatDuration(note.duration)}</span>
+      </div>
     </div>
     ${transcriptHTML}
+    ${tagsHTML}
     <div class="note-progress">
       <div class="note-progress-bar"></div>
     </div>

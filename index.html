@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>Voice Notes</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Voice Notes</h1>
+    </header>
+
+    <section id="recorder">
+      <canvas id="waveform" width="300" height="80"></canvas>
+      <div id="timer">0:00</div>
+      <button id="record-btn" aria-label="Record">
+        <span id="record-icon"></span>
+      </button>
+      <div id="record-hint">Tap to record</div>
+      <div id="model-status" class="hidden"></div>
+    </section>
+
+    <section id="notes">
+      <h2>Saved Notes</h2>
+      <div id="notes-list"></div>
+      <div id="empty-state">No voice notes yet. Tap the button above to record one.</div>
+    </section>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -163,6 +163,92 @@ function stopTranscription() {
   });
 }
 
+// --- Transcribe Audio Blob ---
+
+async function transcribeAudioBlob(blob) {
+  if (!SpeechRecognition) return '';
+  if (!blob) return '';
+
+  return new Promise((resolve) => {
+    let result = '';
+    let settled = false;
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = navigator.language || 'en-US';
+
+    recognition.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const text = e.results[i][0].transcript.trim();
+          if (text) {
+            result += (result ? ' ' : '') + text;
+          }
+        }
+      }
+    };
+
+    recognition.onend = finish;
+    recognition.onerror = finish;
+
+    try {
+      recognition.start();
+    } catch (e) {
+      finish();
+      return;
+    }
+
+    // Play the blob so recognition can capture the audio
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      setTimeout(() => { try { recognition.stop(); } catch (e) {} }, 500);
+    };
+    audio.onerror = () => {
+      URL.revokeObjectURL(url);
+      try { recognition.stop(); } catch (e) {}
+    };
+    audio.play().catch(() => {
+      URL.revokeObjectURL(url);
+      try { recognition.stop(); } catch (e) {}
+    });
+  });
+}
+
+// --- Process Untranscribed Notes ---
+
+async function processUntranscribedNotes() {
+  const notes = await getAllNotes();
+  const untranscribed = notes.filter((n) => !n.transcription);
+  if (untranscribed.length === 0) return;
+
+  let updated = false;
+  for (const note of untranscribed) {
+    try {
+      const transcription = await transcribeAudioBlob(note.audioBlob);
+      if (transcription) {
+        note.transcription = transcription;
+        await saveNote(note);
+        updated = true;
+      }
+    } catch (e) {
+      // Skip notes that fail to transcribe
+    }
+  }
+
+  if (updated) {
+    await renderNotes();
+  }
+}
+
 // --- Audio Recording ---
 
 async function startRecording() {
@@ -477,7 +563,11 @@ if ('serviceWorker' in navigator) {
 
 // --- Initialization ---
 
-renderNotes().catch((err) => {
+renderNotes().then(() => {
+  processUntranscribedNotes().catch((err) => {
+    console.error('Failed to process untranscribed notes:', err);
+  });
+}).catch((err) => {
   console.error('Failed to load notes:', err);
   emptyState.textContent = 'Unable to load notes. Storage may be unavailable.';
 });

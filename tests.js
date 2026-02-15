@@ -442,6 +442,298 @@ suite('stopRecording result contract');
 }
 
 // ============================================================
+// Transcribe audio blob simulation
+// ============================================================
+
+// Simulates the transcribeAudioBlob logic
+function simulateTranscribeBlob(SpeechRecognitionCtor, blob) {
+  if (!SpeechRecognitionCtor) return Promise.resolve('');
+  if (!blob) return Promise.resolve('');
+
+  return new Promise((resolve) => {
+    let result = '';
+    let settled = false;
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const text = e.results[i][0].transcript.trim();
+          if (text) {
+            result += (result ? ' ' : '') + text;
+          }
+        }
+      }
+    };
+
+    recognition.onend = finish;
+    recognition.onerror = finish;
+
+    try {
+      recognition.start();
+    } catch (e) {
+      finish();
+    }
+  });
+}
+
+// Simulates the processUntranscribedNotes logic
+async function simulateProcessUntranscribed(notes, transcribeFn) {
+  const untranscribed = notes.filter((n) => !n.transcription);
+  if (untranscribed.length === 0) return { updatedNotes: [], rendered: false };
+
+  let rendered = false;
+  const updatedNotes = [];
+
+  for (const note of untranscribed) {
+    try {
+      const transcription = await transcribeFn(note.audioBlob);
+      if (transcription) {
+        note.transcription = transcription;
+        updatedNotes.push(note);
+      }
+    } catch (e) {
+      // Skip notes that fail
+    }
+  }
+
+  if (updatedNotes.length > 0) {
+    rendered = true;
+  }
+
+  return { updatedNotes, rendered };
+}
+
+suite('transcribeAudioBlob — no SpeechRecognition');
+await (async () => {
+  const result = await simulateTranscribeBlob(null, { size: 100 });
+  assertEqual(result, '', 'returns empty string without SpeechRecognition');
+})();
+
+suite('transcribeAudioBlob — no blob');
+await (async () => {
+  const result = await simulateTranscribeBlob(function() {}, null);
+  assertEqual(result, '', 'returns empty string without blob');
+})();
+
+suite('transcribeAudioBlob — accumulates recognition results');
+await (async () => {
+  function MockRecognition() {
+    this.continuous = false;
+    this.interimResults = true;
+    this.lang = '';
+    this.onresult = null;
+    this.onend = null;
+    this.onerror = null;
+  }
+  MockRecognition.prototype.start = function() {
+    Promise.resolve().then(() => {
+      if (this.onresult) {
+        this.onresult({
+          resultIndex: 0,
+          results: [{ isFinal: true, 0: { transcript: 'Hello world' } }]
+        });
+      }
+      if (this.onend) this.onend();
+    });
+  };
+
+  const result = await simulateTranscribeBlob(MockRecognition, { size: 100 });
+  assertEqual(result, 'Hello world', 'captures final recognition result');
+})();
+
+suite('transcribeAudioBlob — multiple results');
+await (async () => {
+  function MockRecognition() {
+    this.continuous = false;
+    this.interimResults = true;
+    this.lang = '';
+    this.onresult = null;
+    this.onend = null;
+    this.onerror = null;
+  }
+  MockRecognition.prototype.start = function() {
+    Promise.resolve().then(() => {
+      if (this.onresult) {
+        this.onresult({
+          resultIndex: 0,
+          results: [
+            { isFinal: true, 0: { transcript: 'First sentence' } },
+            { isFinal: true, 0: { transcript: 'Second sentence' } }
+          ]
+        });
+      }
+      if (this.onend) this.onend();
+    });
+  };
+
+  const result = await simulateTranscribeBlob(MockRecognition, { size: 100 });
+  assertEqual(result, 'First sentence Second sentence', 'joins multiple results with space');
+})();
+
+suite('transcribeAudioBlob — onerror resolves');
+await (async () => {
+  function MockRecognition() {
+    this.onresult = null;
+    this.onend = null;
+    this.onerror = null;
+  }
+  MockRecognition.prototype.start = function() {
+    Promise.resolve().then(() => {
+      if (this.onerror) this.onerror({ error: 'service-not-available' });
+    });
+  };
+
+  const result = await simulateTranscribeBlob(MockRecognition, { size: 100 });
+  assertEqual(result, '', 'resolves with empty string on error');
+})();
+
+suite('transcribeAudioBlob — start() throws');
+await (async () => {
+  function MockRecognition() {
+    this.onresult = null;
+    this.onend = null;
+    this.onerror = null;
+  }
+  MockRecognition.prototype.start = function() {
+    throw new Error('not allowed');
+  };
+
+  const result = await simulateTranscribeBlob(MockRecognition, { size: 100 });
+  assertEqual(result, '', 'resolves with empty string when start() throws');
+})();
+
+suite('transcribeAudioBlob — sets continuous and interimResults');
+await (async () => {
+  let capturedContinuous = null;
+  let capturedInterim = null;
+  function MockRecognition() {
+    this.continuous = false;
+    this.interimResults = true;
+    this.lang = '';
+    this.onresult = null;
+    this.onend = null;
+    this.onerror = null;
+  }
+  MockRecognition.prototype.start = function() {
+    capturedContinuous = this.continuous;
+    capturedInterim = this.interimResults;
+    Promise.resolve().then(() => { if (this.onend) this.onend(); });
+  };
+
+  await simulateTranscribeBlob(MockRecognition, { size: 100 });
+  assertEqual(capturedContinuous, true, 'sets continuous = true');
+  assertEqual(capturedInterim, false, 'sets interimResults = false');
+})();
+
+suite('processUntranscribedNotes — all notes already transcribed');
+await (async () => {
+  const notes = [
+    { id: '1', audioBlob: {}, transcription: 'Already done', createdAt: '2026-01-01T00:00:00Z' },
+    { id: '2', audioBlob: {}, transcription: 'Also done', createdAt: '2026-01-02T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, () => Promise.resolve('text'));
+  assertEqual(result.updatedNotes.length, 0, 'no notes updated');
+  assert(!result.rendered, 'no re-render triggered');
+})();
+
+suite('processUntranscribedNotes — empty list');
+await (async () => {
+  const result = await simulateProcessUntranscribed([], () => Promise.resolve('text'));
+  assertEqual(result.updatedNotes.length, 0, 'handles empty notes list');
+  assert(!result.rendered, 'no re-render for empty list');
+})();
+
+suite('processUntranscribedNotes — processes untranscribed notes');
+await (async () => {
+  const notes = [
+    { id: '1', audioBlob: { size: 100 }, transcription: '', createdAt: '2026-01-01T00:00:00Z' },
+    { id: '2', audioBlob: { size: 200 }, transcription: 'Existing', createdAt: '2026-01-02T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, () => Promise.resolve('New text'));
+  assertEqual(result.updatedNotes.length, 1, 'one note updated');
+  assertEqual(result.updatedNotes[0].id, '1', 'correct note was updated');
+  assertEqual(result.updatedNotes[0].transcription, 'New text', 'transcription text applied');
+  assert(result.rendered, 're-render triggered');
+})();
+
+suite('processUntranscribedNotes — legacy notes (no transcription field)');
+await (async () => {
+  const notes = [
+    { id: '1', audioBlob: { size: 100 }, createdAt: '2026-01-01T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, () => Promise.resolve('Transcribed'));
+  assertEqual(result.updatedNotes.length, 1, 'legacy note gets processed');
+  assertEqual(result.updatedNotes[0].transcription, 'Transcribed', 'transcription added to legacy note');
+})();
+
+suite('processUntranscribedNotes — transcription failure is skipped');
+await (async () => {
+  const notes = [
+    { id: '1', audioBlob: { size: 100 }, transcription: '', createdAt: '2026-01-01T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, () => Promise.reject(new Error('fail')));
+  assertEqual(result.updatedNotes.length, 0, 'no notes updated on failure');
+  assert(!result.rendered, 'no re-render on failure');
+})();
+
+suite('processUntranscribedNotes — empty transcription result skipped');
+await (async () => {
+  const notes = [
+    { id: '1', audioBlob: { size: 100 }, transcription: '', createdAt: '2026-01-01T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, () => Promise.resolve(''));
+  assertEqual(result.updatedNotes.length, 0, 'note not updated when transcription is empty');
+  assert(!result.rendered, 'no re-render when transcription empty');
+})();
+
+suite('processUntranscribedNotes — multiple untranscribed notes');
+await (async () => {
+  let callCount = 0;
+  const notes = [
+    { id: '1', audioBlob: { size: 100 }, transcription: '', createdAt: '2026-01-01T00:00:00Z' },
+    { id: '2', audioBlob: { size: 200 }, transcription: '', createdAt: '2026-01-02T00:00:00Z' },
+    { id: '3', audioBlob: { size: 300 }, transcription: 'Done', createdAt: '2026-01-03T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, (blob) => {
+    callCount++;
+    return Promise.resolve('Text ' + callCount);
+  });
+  assertEqual(result.updatedNotes.length, 2, 'two notes updated');
+  assertEqual(callCount, 2, 'transcribe called twice (skips already-transcribed)');
+  assertEqual(result.updatedNotes[0].transcription, 'Text 1', 'first note gets transcription');
+  assertEqual(result.updatedNotes[1].transcription, 'Text 2', 'second note gets transcription');
+  assert(result.rendered, 're-render triggered');
+})();
+
+suite('processUntranscribedNotes — partial failure');
+await (async () => {
+  let callCount = 0;
+  const notes = [
+    { id: '1', audioBlob: { size: 100 }, transcription: '', createdAt: '2026-01-01T00:00:00Z' },
+    { id: '2', audioBlob: { size: 200 }, transcription: '', createdAt: '2026-01-02T00:00:00Z' }
+  ];
+  const result = await simulateProcessUntranscribed(notes, () => {
+    callCount++;
+    if (callCount === 1) return Promise.reject(new Error('fail'));
+    return Promise.resolve('Success');
+  });
+  assertEqual(result.updatedNotes.length, 1, 'one note updated despite first failure');
+  assertEqual(result.updatedNotes[0].id, '2', 'second note succeeded');
+  assert(result.rendered, 're-render triggered for partial success');
+})();
+
+// ============================================================
 // Source file verification
 // ============================================================
 
@@ -474,6 +766,24 @@ suite('Source file integrity');
   const indexHtml = fs.readFileSync(__dirname + '/index.html', 'utf8');
   assert(indexHtml.includes('app.js'), 'index.html loads app.js');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
+}
+
+suite('Source file integrity — transcription on load');
+{
+  const fs = require('fs');
+  const appJs = fs.readFileSync(__dirname + '/app.js', 'utf8');
+
+  assert(appJs.includes('transcribeAudioBlob'), 'app.js defines transcribeAudioBlob');
+  assert(appJs.includes('processUntranscribedNotes'), 'app.js defines processUntranscribedNotes');
+  assert(appJs.includes('async function transcribeAudioBlob'), 'transcribeAudioBlob is async');
+  assert(appJs.includes('async function processUntranscribedNotes'), 'processUntranscribedNotes is async');
+  assert(appJs.includes("!n.transcription"), 'filters notes without transcription');
+  assert(appJs.includes('processUntranscribedNotes()'), 'processUntranscribedNotes is called during init');
+
+  // Verify it's called after renderNotes in the init block
+  const renderIdx = appJs.lastIndexOf('renderNotes()');
+  const processIdx = appJs.indexOf('processUntranscribedNotes()', renderIdx);
+  assert(processIdx > renderIdx, 'processUntranscribedNotes called after renderNotes in init');
 }
 
 } // end runTests

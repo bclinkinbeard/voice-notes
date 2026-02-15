@@ -286,6 +286,34 @@ test.describe("Note Card Rendering", () => {
     await expect(tagChips.nth(1)).toHaveText("reminder");
   });
 
+  test("recovery computes and displays keyword-based tags", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    // Seed a note that has a transcript but NO tags (simulates post-transcription state).
+    // The transcript contains keywords that should trigger: todo ("need to"),
+    // work ("meeting", "project", "deadline"), and reminder ("deadline").
+    await seedNotes(page, [
+      makeNote({
+        id: "note-autotag",
+        transcript:
+          "I need to prepare for the meeting about the project deadline",
+        tone: "neutral",
+        // tags intentionally omitted — recovery should fill them in
+      }),
+    ]);
+    await page.reload();
+
+    const card = page.locator('.note-card[data-id="note-autotag"]');
+    const tagChips = card.locator(".note-tag:not(.tone-label)");
+    // Should show keyword-derived tag chips (work, todo, reminder)
+    await expect(tagChips).toHaveCount(3, { timeout: 5000 });
+    const tagTexts = await tagChips.allTextContents();
+    expect(tagTexts).toContain("work");
+    expect(tagTexts).toContain("todo");
+    expect(tagTexts).toContain("reminder");
+  });
+
   test("limits tag chips to 3", async ({ page }) => {
     await page.goto("/");
     await seedNotes(page, [

@@ -140,13 +140,24 @@ function startTranscription() {
 }
 
 function stopTranscription() {
-  if (speechRecognition) {
-    speechRecognition.stop();
-    speechRecognition = null;
+  if (!speechRecognition) {
+    const result = transcriptionResult;
+    transcriptionResult = '';
+    return Promise.resolve(result);
   }
-  const result = transcriptionResult;
-  transcriptionResult = '';
-  return result;
+
+  return new Promise((resolve) => {
+    const recognition = speechRecognition;
+    speechRecognition = null;
+
+    recognition.onend = () => {
+      const result = transcriptionResult;
+      transcriptionResult = '';
+      resolve(result);
+    };
+
+    recognition.stop();
+  });
 }
 
 // --- Audio Recording ---
@@ -192,30 +203,31 @@ async function startRecording() {
   startTranscription();
 }
 
-function stopRecording() {
+async function stopRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-    return Promise.resolve(null);
+    return null;
   }
 
-  const transcription = stopTranscription();
+  const recorder = mediaRecorder;
+  recorder.stop();
 
-  return new Promise((resolve) => {
-    const recorder = mediaRecorder;
-
-    recorder.onstop = () => {
-      const blob = new Blob(audioChunks, { type: recorder.mimeType });
-      const duration = Math.round((Date.now() - recordingStartTime) / 1000);
-
-      recorder.stream.getTracks().forEach((t) => t.stop());
-      audioChunks = [];
-      mediaRecorder = null;
-      stopTimer();
-
-      resolve({ blob, duration, transcription });
-    };
-
-    recorder.stop();
+  const [transcription, blob, duration] = await Promise.all([
+    stopTranscription(),
+    new Promise((resolve) => {
+      recorder.onstop = () => {
+        resolve(new Blob(audioChunks, { type: recorder.mimeType }));
+      };
+    })
+  ]).then(([text, audioBlob]) => {
+    const dur = Math.round((Date.now() - recordingStartTime) / 1000);
+    recorder.stream.getTracks().forEach((t) => t.stop());
+    audioChunks = [];
+    mediaRecorder = null;
+    stopTimer();
+    return [text, audioBlob, dur];
   });
+
+  return { blob, duration, transcription };
 }
 
 // --- Playback Cleanup ---

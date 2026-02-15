@@ -67,15 +67,35 @@ function accumulateTranscription(resultSets) {
   return transcriptionResult;
 }
 
-// Simulates stopTranscription logic
+// Simulates stopTranscription logic (now async — waits for onend)
 function simulateStopTranscription(recognition, transcriptionResult) {
-  if (recognition) {
-    recognition.stop();
-    recognition = null;
+  if (!recognition) {
+    return Promise.resolve({ result: transcriptionResult, recognition: null, stopped: false });
   }
-  const result = transcriptionResult;
-  transcriptionResult = '';
-  return { result, recognition, cleared: transcriptionResult === '' };
+
+  // Mirror the real app.js stopTranscription: it sets onend, then calls stop().
+  // The browser fires onend asynchronously after stop(). We simulate this.
+  return new Promise((resolve) => {
+    const ref = recognition;
+    ref._stopped = false;
+
+    // Override stop to mark stopped, then async-fire onend
+    ref.stop = function() {
+      ref._stopped = true;
+      Promise.resolve().then(() => {
+        if (ref.onend) ref.onend();
+      });
+    };
+
+    recognition = null;
+
+    ref.onend = () => {
+      const result = transcriptionResult;
+      resolve({ result, recognition: null, stopped: ref._stopped });
+    };
+
+    ref.stop();
+  });
 }
 
 // Simulates startTranscription guard
@@ -188,6 +208,8 @@ function createNoteCard(note) {
 // Test Suites
 // ============================================================
 
+async function runTests() {
+
 suite('formatDuration');
 assertEqual(formatDuration(0), '0:00', 'formats 0 seconds');
 assertEqual(formatDuration(5), '0:05', 'formats 5 seconds');
@@ -262,19 +284,19 @@ assertEqual(
   'multiple results in single batch: finals joined, interim skipped'
 );
 
-suite('stopTranscription logic');
-{
-  const mockRecognition = { stopped: false, stop() { this.stopped = true; } };
-  const result = simulateStopTranscription(mockRecognition, 'Hello world');
-  assertEqual(result.result, 'Hello world', 'returns accumulated text');
-  assert(mockRecognition.stopped, 'calls stop() on recognition');
+suite('stopTranscription logic (async)');
+await (async () => {
+  const mockRecognition = { _stopped: false, stop() { this._stopped = true; } };
+  const result = await simulateStopTranscription(mockRecognition, 'Hello world');
+  assertEqual(result.result, 'Hello world', 'returns accumulated text after onend');
+  assert(mockRecognition._stopped, 'calls stop() on recognition');
   assertEqual(result.recognition, null, 'nullifies recognition reference');
-}
-{
-  const result = simulateStopTranscription(null, '');
+})();
+await (async () => {
+  const result = await simulateStopTranscription(null, '');
   assertEqual(result.result, '', 'returns empty string when no recognition');
   assertEqual(result.recognition, null, 'recognition stays null');
-}
+})();
 
 suite('startTranscription guard');
 assertEqual(wouldStartTranscription(undefined), false, 'does not start when undefined');
@@ -415,6 +437,8 @@ suite('Source file integrity');
   assert(appJs.includes("recognition.interimResults = false"), 'interimResults is false (only final results)');
   assert(appJs.includes("recognition.lang"), 'recognition language is set');
   assert(appJs.includes("navigator.language || 'en-US'"), 'falls back to en-US');
+  assert(appJs.includes('recognition.onend'), 'stopTranscription waits for onend event');
+  assert(appJs.includes('Promise'), 'stopTranscription returns a Promise');
   assert(!appJs.includes('import '), 'no ES module imports (stays vanilla)');
   assert(!appJs.includes('require('), 'no CommonJS requires (stays vanilla)');
   assert(appJs.includes("'use strict'"), 'uses strict mode');
@@ -428,16 +452,22 @@ suite('Source file integrity');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
 }
 
+} // end runTests
+
 // ============================================================
 // Summary
 // ============================================================
 
-console.log('\n' + '='.repeat(40));
-if (failedTests === 0) {
-  console.log('\x1b[32m' + passedTests + '/' + totalTests + ' tests passed\x1b[0m');
-} else {
-  console.log('\x1b[31m' + passedTests + '/' + totalTests + ' passed, ' + failedTests + ' failed\x1b[0m');
-}
-console.log('='.repeat(40));
-
-process.exit(failedTests > 0 ? 1 : 0);
+runTests().then(() => {
+  console.log('\n' + '='.repeat(40));
+  if (failedTests === 0) {
+    console.log('\x1b[32m' + passedTests + '/' + totalTests + ' tests passed\x1b[0m');
+  } else {
+    console.log('\x1b[31m' + passedTests + '/' + totalTests + ' passed, ' + failedTests + ' failed\x1b[0m');
+  }
+  console.log('='.repeat(40));
+  process.exit(failedTests > 0 ? 1 : 0);
+}).catch((err) => {
+  console.error('Test runner error:', err);
+  process.exit(1);
+});

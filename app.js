@@ -263,7 +263,11 @@ async function analyzeNote(noteId, transcript) {
   // Keyword-based tagging (instant, no model needed)
   const tags = tagTranscript(transcript);
 
-  // Sentiment analysis via zero-shot classification
+  // Persist and display tags immediately so the UI never stalls
+  await updateNoteFields(noteId, { tags });
+  updateNoteAnalysis(noteId, "neutral", tags);
+
+  // Sentiment analysis via zero-shot classification (slow — downloads model)
   let tone = "neutral";
   try {
     const classifier = await loadSentimentModel();
@@ -281,10 +285,8 @@ async function analyzeNote(noteId, transcript) {
     // Tone stays "neutral" on failure — non-blocking
   }
 
-  // Persist results
-  await updateNoteFields(noteId, { tone, tags });
-
-  // Update UI
+  // Persist tone and update UI with final result
+  await updateNoteFields(noteId, { tone });
   updateNoteAnalysis(noteId, tone, tags);
 }
 
@@ -676,6 +678,15 @@ async function renderNotes() {
   notes.forEach((note) => notesList.appendChild(createNoteCard(note)));
 
   emptyState.classList.toggle("hidden", notes.length > 0);
+
+  // Re-trigger analysis for notes stuck with a transcript but no tags
+  notes.forEach((note) => {
+    if (note.transcript && !Array.isArray(note.tags)) {
+      analyzeNote(note.id, note.transcript).catch((err) => {
+        console.error("Recovery analysis failed for note", note.id, err);
+      });
+    }
+  });
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────

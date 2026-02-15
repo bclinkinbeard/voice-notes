@@ -142,12 +142,16 @@ function loadTranscriber() {
 async function blobToFloat32Audio(blob) {
   const arrayBuffer = await blob.arrayBuffer();
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const decoded = await audioCtx.decodeAudioData(arrayBuffer);
-  await audioCtx.close();
+  let decoded;
+  try {
+    decoded = await audioCtx.decodeAudioData(arrayBuffer);
+  } finally {
+    await audioCtx.close().catch(() => {});
+  }
 
   const targetRate = 16000;
   const numSamples = Math.round(decoded.duration * targetRate);
-  if (numSamples === 0) return new Float32Array(0);
+  if (!numSamples || numSamples <= 0) return new Float32Array(0);
 
   const offlineCtx = new OfflineAudioContext(1, numSamples, targetRate);
   const source = offlineCtx.createBufferSource();
@@ -156,33 +160,48 @@ async function blobToFloat32Audio(blob) {
   source.start(0);
 
   const resampled = await offlineCtx.startRendering();
-  return resampled.getChannelData(0);
+  const channelData = resampled.getChannelData(0);
+  if (typeof offlineCtx.close === "function") {
+    await offlineCtx.close().catch(() => {});
+  }
+  return channelData;
 }
 
 // Serialize transcription jobs so only one runs at a time
 let transcriptionQueue = Promise.resolve();
 
-function enqueueTranscription(noteId, audioBlob) {
-  transcriptionQueue = transcriptionQueue.then(async () => {
-    try {
-      const t = await loadTranscriber();
-      const audioData = await blobToFloat32Audio(audioBlob);
-      const result = await t(audioData);
-      const transcript = result.text.trim();
-      await updateNoteTranscript(noteId, transcript);
-      updateTranscriptInUI(noteId, transcript);
+const pendingTranscriptions = new Set();
 
-      // Chain NLP analysis (non-blocking — failures won't affect transcription)
-      if (transcript) {
-        analyzeNote(noteId, transcript).catch((err) => {
-          console.error("NLP analysis failed for note", noteId, err);
-        });
+function enqueueTranscription(noteId, audioBlob) {
+  if (pendingTranscriptions.has(noteId)) return; // avoid double-enqueue
+  pendingTranscriptions.add(noteId);
+
+  transcriptionQueue = transcriptionQueue
+    .then(async () => {
+      try {
+        const t = await loadTranscriber();
+        const audioData = await blobToFloat32Audio(audioBlob);
+        const result = await t(audioData);
+        const transcript = (result?.text ?? "").trim();
+        await updateNoteTranscript(noteId, transcript);
+        updateTranscriptInUI(noteId, transcript);
+
+        // Chain NLP analysis (non-blocking — failures won't affect transcription)
+        if (transcript) {
+          analyzeNote(noteId, transcript).catch((err) => {
+            console.error("NLP analysis failed for note", noteId, err);
+          });
+        }
+      } catch (err) {
+        console.error("Transcription failed for note", noteId, err);
+        updateTranscriptInUI(noteId, null);
+      } finally {
+        pendingTranscriptions.delete(noteId);
       }
-    } catch (err) {
-      console.error("Transcription failed for note", noteId, err);
-      updateTranscriptInUI(noteId, null);
-    }
-  });
+    })
+    .catch((err) => {
+      console.error("Transcription queue error:", err);
+    });
 }
 
 function updateTranscriptInUI(noteId, transcript) {
@@ -190,6 +209,7 @@ function updateTranscriptInUI(noteId, transcript) {
   if (!card) return;
 
   const el = card.querySelector(".note-transcript");
+  if (!el) return;
   if (transcript) {
     el.className = "note-transcript";
     el.textContent = transcript;
@@ -238,7 +258,11 @@ function updateNoteAnalysis(noteId, tone, tags) {
       existingTagsContainer.replaceWith(tagsDiv);
     } else {
       const progressEl = card.querySelector(".note-progress");
-      progressEl.parentNode.insertBefore(tagsDiv, progressEl);
+      if (progressEl && progressEl.parentNode) {
+        progressEl.parentNode.insertBefore(tagsDiv, progressEl);
+      } else {
+        card.appendChild(tagsDiv);
+      }
     }
   } else if (existingTagsContainer) {
     existingTagsContainer.remove();
@@ -274,16 +298,18 @@ function loadSentimentModel() {
   return sentimentLoadingPromise;
 }
 
-async function analyzeNote(noteId, transcript) {
+async function analyzeNote(noteId, transcript, existingTone) {
   // Keyword-based tagging (instant, no model needed)
   const tags = tagTranscript(transcript);
 
-  // Persist and display tags immediately so the UI never stalls
+  // Persist and display tags immediately so the UI never stalls.
+  // Preserve the existing tone in the intermediate UI update so the pill
+  // doesn't flicker away while the sentiment model loads.
   await updateNoteFields(noteId, { tags });
-  updateNoteAnalysis(noteId, null, tags);
+  updateNoteAnalysis(noteId, existingTone || null, tags);
 
   // Sentiment analysis via zero-shot classification (slow — downloads model)
-  let tone = "neutral";
+  let tone = existingTone || null;
   try {
     const classifier = await loadSentimentModel();
     const result = await classifier(transcript, [
@@ -294,6 +320,7 @@ async function analyzeNote(noteId, transcript) {
     const topLabel = result.labels[0];
     const topScore = result.scores[0];
 
+    tone = "neutral";
     if (topScore > 0.5) {
       if (topLabel === "positive") tone = "warm";
       else if (topLabel === "negative") tone = "heavy";
@@ -302,8 +329,10 @@ async function analyzeNote(noteId, transcript) {
     console.error("Sentiment analysis failed for note", noteId, err);
   }
 
-  // Persist tone and update UI with final result
-  await updateNoteFields(noteId, { tone });
+  // Only persist tone if we actually ran sentiment (don't overwrite with null)
+  if (tone) {
+    await updateNoteFields(noteId, { tone });
+  }
   updateNoteAnalysis(noteId, tone, tags);
 }
 
@@ -423,6 +452,7 @@ function stopTimer() {
 }
 
 function updateTimer() {
+  if (!recordingStartTime) return;
   const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
   const mins = Math.floor(elapsed / 60);
   const secs = String(elapsed % 60).padStart(2, "0");
@@ -496,7 +526,12 @@ recordBtn.addEventListener("click", async () => {
     recordBtn.classList.remove("recording");
     recordHint.textContent = "Tap to record";
 
-    const result = await stopRecording();
+    let result;
+    try {
+      result = await stopRecording();
+    } catch (err) {
+      console.error("Failed to stop recording:", err);
+    }
 
     if (result && result.duration > 0) {
       const note = {
@@ -507,8 +542,13 @@ recordBtn.addEventListener("click", async () => {
         createdAt: new Date().toISOString(),
       };
 
-      await saveNote(note);
-      renderNotes();
+      try {
+        await saveNote(note);
+      } catch (err) {
+        console.error("Failed to save note:", err);
+        return;
+      }
+      await renderNotes();
 
       // Transcribe asynchronously — UI updates when done
       enqueueTranscription(note.id, result.blob);
@@ -608,6 +648,7 @@ function createNoteCard(note) {
     if (currentlyPlaying && currentlyPlaying.noteId !== note.id) {
       currentlyPlaying.audio.pause();
       currentlyPlaying.audio.currentTime = 0;
+      if (currentlyPlaying.url) URL.revokeObjectURL(currentlyPlaying.url);
       const otherCard = notesList.querySelector(
         `[data-id="${currentlyPlaying.noteId}"]`,
       );
@@ -633,7 +674,7 @@ function createNoteCard(note) {
 
     const url = URL.createObjectURL(note.audioBlob);
     const audio = new Audio(url);
-    currentlyPlaying = { audio, noteId: note.id };
+    currentlyPlaying = { audio, noteId: note.id, url };
 
     function resetPlayUI() {
       playBtn.innerHTML = "&#9654; Play";
@@ -674,12 +715,16 @@ function createNoteCard(note) {
   });
 
   card.querySelector(".delete-btn").addEventListener("click", async () => {
-    if (currentlyPlaying && currentlyPlaying.noteId === note.id) {
-      currentlyPlaying.audio.pause();
-      currentlyPlaying = null;
+    try {
+      if (currentlyPlaying && currentlyPlaying.noteId === note.id) {
+        currentlyPlaying.audio.pause();
+        currentlyPlaying = null;
+      }
+      await deleteNote(note.id);
+      await renderNotes();
+    } catch (err) {
+      console.error("Failed to delete note:", err);
     }
-    await deleteNote(note.id);
-    renderNotes();
   });
 
   return card;
@@ -708,11 +753,22 @@ async function renderNotes() {
     }
   });
 
-  // Re-trigger analysis for notes that have a transcript but are missing
-  // tags or tone (covers both first-run and upgrade from older versions).
+  // Recovery: fill in missing tags and/or tone for notes that already have a
+  // transcript (covers first-run and upgrade from older versions).
   notes.forEach((note) => {
-    if (note.transcript && (!Array.isArray(note.tags) || !note.tone)) {
-      analyzeNote(note.id, note.transcript).catch((err) => {
+    if (!note.transcript) return;
+
+    const needsTags = !Array.isArray(note.tags);
+    const needsTone = !note.tone;
+
+    if (needsTags && !needsTone) {
+      // Only tags are missing — compute instantly without re-running sentiment
+      // so we never flicker or risk overwriting the existing tone.
+      const tags = tagTranscript(note.transcript);
+      updateNoteFields(note.id, { tags }).catch(() => {});
+      updateNoteAnalysis(note.id, note.tone, tags);
+    } else if (needsTags || needsTone) {
+      analyzeNote(note.id, note.transcript, note.tone).catch((err) => {
         console.error("Recovery analysis failed for note", note.id, err);
       });
     }
@@ -722,7 +778,7 @@ async function renderNotes() {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 clearWaveform();
-renderNotes();
+renderNotes().catch((err) => console.error("Failed to load notes:", err));
 
 // Preload the Whisper model in the background so it's ready when needed
 loadTranscriber().catch(() => {});

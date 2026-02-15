@@ -290,3 +290,72 @@ header h1 {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
+
+/* ─── Tone Indicator ─────────────────────────────────────────────────────── */
+
+.note-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-tone {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64748b;
+  flex-shrink: 0;
+  transition: background 0.3s ease;
+}
+
+.note-tone[data-tone="warm"] {
+  background: #4ade80;
+}
+
+.note-tone[data-tone="neutral"] {
+  background: #64748b;
+}
+
+.note-tone[data-tone="heavy"] {
+  background: #f59e0b;
+}
+
+/* ─── Auto-Tags ──────────────────────────────────────────────────────────── */
+
+.note-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.note-tag {
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ─── NLP Analyzing State ────────────────────────────────────────────────── */
+
+.analyzing-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.analyzing-text::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  animation: pulse 1s infinite;
+}

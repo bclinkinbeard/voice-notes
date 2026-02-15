@@ -1,4 +1,5 @@
 import { pipeline } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3";
+import { tagTranscript } from "./tagger.js";
 
 // ─── IndexedDB Storage ───────────────────────────────────────────────────────
 
@@ -60,6 +61,24 @@ async function updateNoteTranscript(id, transcript) {
       const note = getReq.result;
       if (note) {
         note.transcript = transcript;
+        store.put(note);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function updateNoteFields(id, fields) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const note = getReq.result;
+      if (note) {
+        Object.assign(note, fields);
         store.put(note);
       }
     };

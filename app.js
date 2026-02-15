@@ -105,17 +105,20 @@ function hideModelStatus() {
   modelStatusEl.className = "hidden";
 }
 
-const MODEL_LOAD_TIMEOUT_MS = 60000;
-
 function loadTranscriber() {
   if (transcriber) return Promise.resolve(transcriber);
   if (modelLoadingPromise) return modelLoadingPromise;
 
   showModelStatus("Loading transcription model...");
 
-  const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("Model load timed out")), MODEL_LOAD_TIMEOUT_MS),
-  );
+  // Timeout that we can cancel on success to avoid a leaked rejection.
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error("Model load timed out")),
+      60000,
+    );
+  });
 
   modelLoadingPromise = Promise.race([
     pipeline(
@@ -135,12 +138,14 @@ function loadTranscriber() {
     timeout,
   ])
     .then((p) => {
+      clearTimeout(timeoutId);
       transcriber = p;
       showModelStatus("Model ready", "ready");
       setTimeout(hideModelStatus, 2000);
       return transcriber;
     })
     .catch((err) => {
+      clearTimeout(timeoutId);
       console.error("Failed to load Whisper model:", err);
       showModelStatus("Model failed to load", "error");
       modelLoadingPromise = null;
@@ -150,17 +155,20 @@ function loadTranscriber() {
   return modelLoadingPromise;
 }
 
+// Reusable AudioContext for decoding audio blobs.  Browsers limit how many
+// AudioContexts can exist simultaneously (typically ~6).  Creating and closing
+// a new one per transcription exhausts that limit and causes crashes.  By
+// reusing a single context we stay well within the budget.
+let decodingAudioCtx = null;
+
 async function blobToFloat32Audio(blob) {
   const arrayBuffer = await blob.arrayBuffer();
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  let decoded;
-  try {
-    decoded = await audioCtx.decodeAudioData(arrayBuffer);
-  } finally {
-    if (audioCtx.state !== "closed") {
-      await audioCtx.close().catch(() => {});
-    }
+
+  if (!decodingAudioCtx || decodingAudioCtx.state === "closed") {
+    decodingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
+
+  const decoded = await decodingAudioCtx.decodeAudioData(arrayBuffer.slice(0));
 
   const targetRate = 16000;
   const numSamples = Math.round(decoded.duration * targetRate);
@@ -173,11 +181,7 @@ async function blobToFloat32Audio(blob) {
   source.start(0);
 
   const resampled = await offlineCtx.startRendering();
-  const channelData = resampled.getChannelData(0);
-  if (typeof offlineCtx.close === "function") {
-    await offlineCtx.close().catch(() => {});
-  }
-  return channelData;
+  return resampled.getChannelData(0);
 }
 
 // Serialize transcription jobs so only one runs at a time
@@ -395,12 +399,15 @@ async function startRecording() {
   analyser.fftSize = 256;
   source.connect(analyser);
 
-  // Determine supported MIME type
-  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-    ? "audio/webm;codecs=opus"
-    : MediaRecorder.isTypeSupported("audio/webm")
-      ? "audio/webm"
-      : "";
+  // Determine best supported MIME type; fall back gracefully.
+  let mimeType = "";
+  if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported) {
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+      mimeType = "audio/webm;codecs=opus";
+    } else if (MediaRecorder.isTypeSupported("audio/webm")) {
+      mimeType = "audio/webm";
+    }
+  }
 
   const options = mimeType ? { mimeType } : {};
   mediaRecorder = new MediaRecorder(stream, options);
@@ -438,11 +445,14 @@ function stopRecording() {
     audioChunks = [];
     analyser = null;
     animationFrameId = null;
+    recordingStartTime = null;
 
     recorder.onstop = () => {
-      const mimeType = recorder.mimeType || "audio/webm";
-      const blob = new Blob(chunks, { type: mimeType });
-      const duration = Math.round((Date.now() - startTime) / 1000);
+      const mtype = recorder.mimeType || "audio/webm";
+      const blob = new Blob(chunks, { type: mtype });
+      const duration = startTime
+        ? Math.round((Date.now() - startTime) / 1000)
+        : 0;
 
       // Don't stop stream tracks — keep the mic grant alive for quick re-record.
       // Don't close the AudioContext — closing it kills the stream source and
@@ -597,13 +607,16 @@ if (recordBtn) {
 }
 
 function formatDuration(seconds) {
+  if (!seconds || !isFinite(seconds)) return "0:00";
   const m = Math.floor(seconds / 60);
-  const s = String(seconds % 60).padStart(2, "0");
+  const s = String(Math.round(seconds) % 60).padStart(2, "0");
   return `${m}:${s}`;
 }
 
 function formatDate(isoString) {
+  if (!isoString) return "";
   const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -705,10 +718,7 @@ function createNoteCard(note) {
       return;
     }
 
-    if (!note.audioBlob) {
-      console.error("No audio blob for note", note.id);
-      return;
-    }
+    if (!note.audioBlob) return;
 
     const url = URL.createObjectURL(note.audioBlob);
     const audio = new Audio(url);
@@ -828,17 +838,21 @@ loadTranscriber().catch(() => {});
 
 // Pre-acquire the mic stream if permission was previously granted so the user
 // doesn't get re-prompted on first record click.
-if (navigator.permissions && typeof navigator.permissions.query === "function") {
-  navigator.permissions.query({ name: "microphone" }).then((status) => {
-    if (status.state === "granted") {
-      acquireMicStream().catch(() => {});
-    }
-    if (typeof status.addEventListener === "function") {
-      status.addEventListener("change", () => {
-        if (status.state === "denied" && recordHint) {
-          recordHint.textContent = "Microphone access denied";
-        }
-      });
-    }
-  }).catch(() => {});
+try {
+  if (navigator.permissions && typeof navigator.permissions.query === "function") {
+    navigator.permissions.query({ name: "microphone" }).then((status) => {
+      if (status.state === "granted") {
+        acquireMicStream().catch(() => {});
+      }
+      if (typeof status.addEventListener === "function") {
+        status.addEventListener("change", () => {
+          if (status.state === "denied" && recordHint) {
+            recordHint.textContent = "Microphone access denied";
+          }
+        });
+      }
+    }).catch(() => {});
+  }
+} catch (_) {
+  // permissions API not available
 }

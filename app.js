@@ -199,6 +199,40 @@ function updateTranscriptInUI(noteId, transcript) {
   }
 }
 
+function updateNoteAnalysis(noteId, tone, tags) {
+  const card = notesList.querySelector(`[data-id="${noteId}"]`);
+  if (!card) return;
+
+  // Update tone dot
+  const toneDot = card.querySelector(".note-tone");
+  if (toneDot) {
+    toneDot.dataset.tone = tone || "neutral";
+  }
+
+  // Replace analyzing indicator with tags (or remove it)
+  const existingTagsContainer = card.querySelector(".note-tags");
+
+  if (tags && tags.length > 0) {
+    const tagsDiv = document.createElement("div");
+    tagsDiv.className = "note-tags";
+    tags.slice(0, 3).forEach((t) => {
+      const span = document.createElement("span");
+      span.className = "note-tag";
+      span.textContent = t;
+      tagsDiv.appendChild(span);
+    });
+
+    if (existingTagsContainer) {
+      existingTagsContainer.replaceWith(tagsDiv);
+    } else {
+      const progressEl = card.querySelector(".note-progress");
+      progressEl.parentNode.insertBefore(tagsDiv, progressEl);
+    }
+  } else if (existingTagsContainer) {
+    existingTagsContainer.remove();
+  }
+}
+
 // ─── NLP Analysis (sentiment + tagging) ─────────────────────────────────────
 
 let sentimentClassifier = null;

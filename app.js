@@ -255,11 +255,15 @@ function stopTranscription() {
     recognition.onend = done;
     recognition.onerror = done;
 
-    try {
-      recognition.stop();
-    } catch (e) {
-      done();
-    }
+    // Let recognition keep listening briefly so the engine can
+    // finalize the last utterance before we cut it off.
+    setTimeout(() => {
+      try {
+        recognition.stop();
+      } catch (e) {
+        done();
+      }
+    }, 1500);
   });
 }
 

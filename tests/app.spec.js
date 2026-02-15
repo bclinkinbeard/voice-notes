@@ -108,6 +108,24 @@ function makeNote(overrides = {}) {
   };
 }
 
+/**
+ * Populate the browser Cache API with a fake entry for the Whisper model so
+ * that `isModelCached()` in app.js returns true and triggers the preload path.
+ * Must be called AFTER a page.goto() (needs a browsing context) but BEFORE the
+ * page.reload() that should trigger eager preloading.
+ */
+async function seedModelCache(page) {
+  await page.evaluate(async () => {
+    const cache = await caches.open("transformers-test");
+    await cache.put(
+      new Request(
+        "https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/config.json",
+      ),
+      new Response("{}"),
+    );
+  });
+}
+
 // Apply CDN mock globally so every page.goto() works without network
 test.beforeEach(async ({ page }) => {
   await mockTransformers(page);
@@ -814,7 +832,10 @@ test.describe("Stability", () => {
     const errors = [];
     page.on("pageerror", (err) => errors.push(err.message));
 
+    // Seed cache so the preload triggers, then reload to hit the rejection.
     await page.goto("/");
+    await seedModelCache(page);
+    await page.reload();
     await page.waitForTimeout(1500);
 
     // App should still be functional (no uncaught page errors)
@@ -1091,7 +1112,12 @@ test.describe("Stability", () => {
       });
     });
 
+    // First load — model is not cached, so no eager preload.  Seed the cache
+    // so the reload triggers the preload path and hits the rejection.
     await page.goto("/");
+    await seedModelCache(page);
+    await page.reload();
+
     // Model status should show error
     await expect(page.locator("#model-status")).toHaveText(
       "Model failed to load",
@@ -1257,15 +1283,8 @@ test.describe("Non-Blocking Model Loading", () => {
 
     await page.goto("/");
 
-    // Model should still be loading
-    await expect(page.locator("#model-status")).not.toHaveClass("hidden");
-
-    // But UI should be fully interactive — notes render and buttons work
-    await expect(page.locator("h1")).toHaveText("Voice Notes");
-    await expect(page.locator("#record-btn")).toBeVisible();
-    await expect(page.locator("#record-btn")).toBeEnabled();
-
-    // Seed notes while model is still loading
+    // Seed a note and the model cache, then reload.  The cache entry makes
+    // isModelCached() return true so the slow preload triggers on reload.
     await page.evaluate(`(async () => {
       const req = indexedDB.open("voiceNotesDB", 1);
       req.onupgradeneeded = () => {
@@ -1289,7 +1308,16 @@ test.describe("Non-Blocking Model Loading", () => {
         };
       });
     })()`);
+    await seedModelCache(page);
     await page.reload();
+
+    // Model should be loading (cached model triggers preload)
+    await expect(page.locator("#model-status")).not.toHaveClass("hidden");
+
+    // But UI should be fully interactive — notes render and buttons work
+    await expect(page.locator("h1")).toHaveText("Voice Notes");
+    await expect(page.locator("#record-btn")).toBeVisible();
+    await expect(page.locator("#record-btn")).toBeEnabled();
 
     // Notes are visible even while model loads
     await expect(
@@ -1355,6 +1383,7 @@ test.describe("Non-Blocking Model Loading", () => {
         };
       });
     })()`);
+    await seedModelCache(page);
     await page.reload();
 
     // Notes should be visible immediately — not waiting for model

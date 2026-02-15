@@ -89,6 +89,8 @@ async function updateNoteFields(id, fields) {
 
 // ─── Whisper Transcription (fully local via transformers.js) ─────────────────
 
+const WHISPER_MODEL = "onnx-community/whisper-tiny.en";
+
 let transcriber = null;
 let modelLoadingPromise = null;
 
@@ -105,11 +107,37 @@ function hideModelStatus() {
   modelStatusEl.className = "hidden";
 }
 
+/**
+ * Check whether the Whisper model files are already present in the browser
+ * Cache API (put there by a previous Transformers.js download).  Returns
+ * true if at least one model-specific entry exists.
+ */
+async function isModelCached() {
+  try {
+    const cacheNames = await caches.keys();
+    for (const name of cacheNames) {
+      const cache = await caches.open(name);
+      const keys = await cache.keys();
+      if (keys.some((r) => r.url && r.url.includes(WHISPER_MODEL))) {
+        return true;
+      }
+    }
+  } catch (_) {
+    // Cache API unavailable (e.g. opaque origin, Firefox private mode)
+  }
+  return false;
+}
+
 function loadTranscriber() {
   if (transcriber) return Promise.resolve(transcriber);
   if (modelLoadingPromise) return modelLoadingPromise;
 
-  showModelStatus("Loading transcription model...");
+  // Track whether any real download progress occurs.  If the model is
+  // served from cache, Transformers.js fires "initiate" but never fires
+  // "progress" with meaningful totals — so we can tell the difference.
+  let sawDownloadProgress = false;
+
+  showModelStatus("Loading model\u2026");
 
   // Timeout that we can cancel on success to avoid a leaked rejection.
   let timeoutId;
@@ -123,14 +151,18 @@ function loadTranscriber() {
   modelLoadingPromise = Promise.race([
     pipeline(
       "automatic-speech-recognition",
-      "onnx-community/whisper-tiny.en",
+      WHISPER_MODEL,
       {
         progress_callback: (event) => {
           if (event.status === "progress" && event.total) {
+            sawDownloadProgress = true;
             const pct = Math.round((event.loaded / event.total) * 100);
-            showModelStatus(`Downloading model... ${pct}%`);
+            showModelStatus(`Downloading model\u2026 ${pct}%`);
           } else if (event.status === "initiate") {
-            showModelStatus("Downloading model...");
+            // Don't overwrite a "Downloading" message with a vaguer one
+            if (!sawDownloadProgress) {
+              showModelStatus("Loading model\u2026");
+            }
           }
         },
       },
@@ -880,8 +912,14 @@ async function renderNotes() {
 clearWaveform();
 renderNotes().catch((err) => console.error("Failed to load notes:", err));
 
-// Preload the Whisper model in the background so it's ready when needed
-loadTranscriber().catch(() => {});
+// Only preload the Whisper model if it's already cached (fast — just ONNX
+// session init from local files).  If it hasn't been downloaded yet, skip the
+// preload entirely; the model will download on-demand when the user records
+// their first note or when recovery transcription is needed.  This avoids the
+// heavy download+init on every page load which can crash the tab.
+isModelCached().then((cached) => {
+  if (cached) loadTranscriber().catch(() => {});
+});
 
 // Pre-acquire the mic stream if permission was previously granted so the user
 // doesn't get re-prompted on first record click.

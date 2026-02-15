@@ -1614,4 +1614,53 @@ test.describe("Real Recording Flow", () => {
     );
     expect(realErrors).toEqual([]);
   });
+
+  test("recording is transcribed without page crash", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["microphone"]);
+
+    const errors = [];
+    page.on("pageerror", (err) => errors.push(err.message));
+
+    await page.goto("/");
+
+    const recordBtn = page.locator("#record-btn");
+    const hint = page.locator("#record-hint");
+
+    // Record for 1.5 seconds
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to stop", { timeout: 5000 });
+    await page.waitForTimeout(1500);
+    await recordBtn.click();
+    await expect(hint).toHaveText("Tap to record", { timeout: 5000 });
+
+    // Note should appear with "Transcribing..." initially
+    const card = page.locator(".note-card").first();
+    await expect(card).toBeVisible({ timeout: 5000 });
+
+    // Wait for transcription to complete (the mock model returns empty string,
+    // so the transcript will become empty or show "Transcription failed").
+    // The key thing is the page must NOT crash during this process.
+    const transcript = card.locator(".note-transcript");
+    await expect(transcript).not.toHaveClass(/transcribing/, {
+      timeout: 15000,
+    });
+
+    // Verify page is still alive and responsive
+    await expect(page.locator("h1")).toHaveText("Voice Notes");
+    await expect(recordBtn).toBeVisible();
+
+    // No uncaught errors
+    const realErrors = errors.filter(
+      (e) =>
+        !e.includes("Failed to load") &&
+        !e.includes("pipeline") &&
+        !e.includes("Model load timed out") &&
+        !e.includes("Transcription failed") &&
+        !e.includes("EncodingError"),
+    );
+    expect(realErrors).toEqual([]);
+  });
 });

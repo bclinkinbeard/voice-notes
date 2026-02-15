@@ -163,12 +163,25 @@ let decodingAudioCtx = null;
 
 async function blobToFloat32Audio(blob) {
   const arrayBuffer = await blob.arrayBuffer();
+  if (!arrayBuffer.byteLength) return new Float32Array(0);
 
   if (!decodingAudioCtx || decodingAudioCtx.state === "closed") {
     decodingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
 
-  const decoded = await decodingAudioCtx.decodeAudioData(arrayBuffer.slice(0));
+  // decodeAudioData can throw synchronously (DOMException) or reject its
+  // promise depending on the browser and audio format.  Wrap in both
+  // try/catch and Promise handling to cover all cases.
+  let decoded;
+  try {
+    decoded = await decodingAudioCtx.decodeAudioData(arrayBuffer.slice(0));
+  } catch (err) {
+    // If the context is in a bad state after a failed decode, replace it
+    // so the next call can succeed.
+    try { decodingAudioCtx.close(); } catch (_) {}
+    decodingAudioCtx = null;
+    throw err;
+  }
 
   const targetRate = 16000;
   const numSamples = Math.round(decoded.duration * targetRate);

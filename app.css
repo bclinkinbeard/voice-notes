@@ -217,9 +217,14 @@ header {
   font-family: inherit;
 }
 
-.play-btn {
+.play-btn,
+.transcribe-btn {
   background: var(--surface-2);
   color: var(--text);
+}
+
+.transcribe-btn:disabled {
+  opacity: 0.5;
 }
 
 .delete-btn {
@@ -228,6 +233,7 @@ header {
 }
 
 .play-btn:active,
+.transcribe-btn:active,
 .delete-btn:active {
   opacity: 0.7;
 }

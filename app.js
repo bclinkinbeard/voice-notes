@@ -19,6 +19,8 @@ let currentPlayBtn = null;
 let currentProgressFill = null;
 let isRecording = false;
 let recordBusy = false;
+let speechRecognition = null;
+let transcriptionResult = '';
 
 // --- IndexedDB ---
 
@@ -103,6 +105,50 @@ function stopTimer() {
   timerEl.textContent = '0:00';
 }
 
+// --- Speech Transcription ---
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function startTranscription() {
+  if (!SpeechRecognition) return;
+
+  transcriptionResult = '';
+  const recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = navigator.language || 'en-US';
+
+  recognition.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        const text = e.results[i][0].transcript.trim();
+        if (text) {
+          transcriptionResult += (transcriptionResult ? ' ' : '') + text;
+        }
+      }
+    }
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error !== 'aborted' && e.error !== 'no-speech') {
+      console.error('Speech recognition error:', e.error);
+    }
+  };
+
+  recognition.start();
+  speechRecognition = recognition;
+}
+
+function stopTranscription() {
+  if (speechRecognition) {
+    speechRecognition.stop();
+    speechRecognition = null;
+  }
+  const result = transcriptionResult;
+  transcriptionResult = '';
+  return result;
+}
+
 // --- Audio Recording ---
 
 async function startRecording() {
@@ -143,12 +189,15 @@ async function startRecording() {
   mediaRecorder.start(100);
   recordingStartTime = Date.now();
   startTimer();
+  startTranscription();
 }
 
 function stopRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') {
     return Promise.resolve(null);
   }
+
+  const transcription = stopTranscription();
 
   return new Promise((resolve) => {
     const recorder = mediaRecorder;
@@ -162,7 +211,7 @@ function stopRecording() {
       mediaRecorder = null;
       stopTimer();
 
-      resolve({ blob, duration });
+      resolve({ blob, duration, transcription });
     };
 
     recorder.stop();
@@ -243,9 +292,20 @@ function createNoteCard(note) {
   actions.appendChild(playBtn);
   actions.appendChild(deleteBtn);
 
+  // Transcription
+  const transcriptionEl = document.createElement('p');
+  transcriptionEl.className = 'note-transcription';
+  if (note.transcription) {
+    transcriptionEl.textContent = note.transcription;
+  } else {
+    transcriptionEl.textContent = 'No transcription available';
+    transcriptionEl.classList.add('note-transcription-empty');
+  }
+
   // Assemble card
   card.appendChild(header);
   card.appendChild(progress);
+  card.appendChild(transcriptionEl);
   card.appendChild(actions);
 
   // Play button handler
@@ -364,6 +424,7 @@ recordBtn.addEventListener('click', async () => {
           id: crypto.randomUUID(),
           audioBlob: result.blob,
           duration: result.duration,
+          transcription: result.transcription || '',
           createdAt: new Date().toISOString()
         };
         await saveNote(note);

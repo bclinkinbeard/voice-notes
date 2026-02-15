@@ -195,24 +195,42 @@ function startTranscription() {
   if (!SpeechRecognition) return;
 
   transcriptionResult = '';
-  const recognition = new SpeechRecognition();
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = navigator.language || 'en-US';
 
-  recognition.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        const text = e.results[i][0].transcript.trim();
-        if (text) {
-          transcriptionResult += (transcriptionResult ? ' ' : '') + text;
+  function createRecognition() {
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = navigator.language || 'en-US';
+
+    recognition.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const text = e.results[i][0].transcript.trim();
+          if (text) {
+            transcriptionResult += (transcriptionResult ? ' ' : '') + text;
+          }
         }
       }
-    }
-  };
+    };
 
-  recognition.onerror = () => {};
+    recognition.onerror = () => {
+      if (isRecording && speechRecognition === recognition) {
+        try { recognition.stop(); } catch (e) {}
+      }
+    };
 
+    recognition.onend = () => {
+      if (isRecording && speechRecognition === recognition) {
+        const restarted = createRecognition();
+        restarted.start();
+        speechRecognition = restarted;
+      }
+    };
+
+    return recognition;
+  }
+
+  const recognition = createRecognition();
   recognition.start();
   speechRecognition = recognition;
 }
@@ -247,19 +265,24 @@ function stopTranscription() {
 
 // --- Transcribe Audio Blob ---
 
-async function transcribeAudioBlob(blob) {
-  if (!SpeechRecognition) return '';
-  if (!blob) return '';
+function transcribeAudioBlob(blob) {
+  if (!SpeechRecognition) return Promise.resolve('');
+  if (!blob) return Promise.resolve('');
 
   return new Promise((resolve) => {
     let result = '';
     let settled = false;
+    let timeout = null;
 
     function finish() {
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
       resolve(result);
     }
+
+    // Safety timeout: resolve after 2x the blob duration or 60s max
+    timeout = setTimeout(finish, 60000);
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -287,7 +310,7 @@ async function transcribeAudioBlob(blob) {
       return;
     }
 
-    // Play the blob so recognition can capture the audio
+    // Play the blob so recognition can capture the audio via microphone
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     audio.onended = () => {
@@ -303,32 +326,6 @@ async function transcribeAudioBlob(blob) {
       try { recognition.stop(); } catch (e) {}
     });
   });
-}
-
-// --- Process Untranscribed Notes ---
-
-async function processUntranscribedNotes() {
-  const notes = await getAllNotes();
-  const untranscribed = notes.filter((n) => !n.transcription);
-  if (untranscribed.length === 0) return;
-
-  let updated = false;
-  for (const note of untranscribed) {
-    try {
-      const transcription = await transcribeAudioBlob(note.audioBlob);
-      if (transcription) {
-        note.transcription = transcription;
-        await saveNote(note);
-        updated = true;
-      }
-    } catch (e) {
-      // Skip notes that fail to transcribe
-    }
-  }
-
-  if (updated) {
-    await renderNotes();
-  }
 }
 
 // --- Audio Recording ---
@@ -485,8 +482,37 @@ function createNoteCard(note) {
   if (note.transcription) {
     transcriptionEl.textContent = note.transcription;
   } else {
-    transcriptionEl.textContent = 'No transcription available';
+    transcriptionEl.textContent = 'No transcription';
     transcriptionEl.classList.add('note-transcription-empty');
+  }
+
+  // Transcribe button for notes without transcription
+  if (!note.transcription && SpeechRecognition) {
+    const transcribeBtn = document.createElement('button');
+    transcribeBtn.type = 'button';
+    transcribeBtn.className = 'transcribe-btn';
+    transcribeBtn.textContent = 'Transcribe';
+    transcribeBtn.addEventListener('click', async () => {
+      transcribeBtn.disabled = true;
+      transcribeBtn.textContent = 'Transcribing...';
+      try {
+        const transcription = await transcribeAudioBlob(note.audioBlob);
+        if (transcription) {
+          note.transcription = transcription;
+          await saveNote(note);
+          transcriptionEl.textContent = transcription;
+          transcriptionEl.classList.remove('note-transcription-empty');
+          transcribeBtn.remove();
+        } else {
+          transcribeBtn.textContent = 'Transcribe';
+          transcribeBtn.disabled = false;
+        }
+      } catch (e) {
+        transcribeBtn.textContent = 'Transcribe';
+        transcribeBtn.disabled = false;
+      }
+    });
+    actions.appendChild(transcribeBtn);
   }
 
   // Assemble card
@@ -651,11 +677,7 @@ if ('serviceWorker' in navigator) {
 
 // --- Initialization ---
 
-renderNotes().then(() => {
-  processUntranscribedNotes().catch((err) => {
-    console.error('Failed to process untranscribed notes:', err);
-  });
-}).catch((err) => {
+renderNotes().catch((err) => {
   console.error('Failed to load notes:', err);
   emptyState.textContent = 'Unable to load notes. Storage may be unavailable.';
 });

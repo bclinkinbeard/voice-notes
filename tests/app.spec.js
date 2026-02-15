@@ -109,21 +109,43 @@ function makeNote(overrides = {}) {
 }
 
 /**
- * Populate the browser Cache API with a fake entry for the Whisper model so
- * that `isModelCached()` in app.js returns true and triggers the preload path.
- * Must be called AFTER a page.goto() (needs a browsing context) but BEFORE the
- * page.reload() that should trigger eager preloading.
+ * Seed IndexedDB with a note that has an audioBlob but no transcript.
+ * On page load, renderNotes() will find this and call enqueueTranscription(),
+ * which triggers loadTranscriber().  This is how we force model loading in
+ * tests now that the eager preload has been removed.
  */
-async function seedModelCache(page) {
-  await page.evaluate(async () => {
-    const cache = await caches.open("transformers-test");
-    await cache.put(
-      new Request(
-        "https://huggingface.co/onnx-community/whisper-tiny.en/resolve/main/config.json",
-      ),
-      new Response("{}"),
-    );
-  });
+async function seedUntranscribedNote(page, id = "needs-transcription") {
+  await page.evaluate(
+    ([noteId, wavScript]) => {
+      const blob = new Function(`return ${wavScript}`)();
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open("voiceNotesDB", 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains("notes"))
+            db.createObjectStore("notes", { keyPath: "id" });
+        };
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction("notes", "readwrite");
+          tx.objectStore("notes").put({
+            id: noteId,
+            audioBlob: blob,
+            transcript: null,
+            duration: 1,
+            createdAt: new Date().toISOString(),
+          });
+          tx.oncomplete = () => {
+            db.close();
+            resolve();
+          };
+          tx.onerror = () => reject(tx.error);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    },
+    [id, makeWavBlobScript(1)],
+  );
 }
 
 // Apply CDN mock globally so every page.goto() works without network
@@ -832,9 +854,10 @@ test.describe("Stability", () => {
     const errors = [];
     page.on("pageerror", (err) => errors.push(err.message));
 
-    // Seed cache so the preload triggers, then reload to hit the rejection.
+    // Seed an untranscribed note so renderNotes() triggers loadTranscriber()
+    // on reload, which will hit the pipeline rejection.
     await page.goto("/");
-    await seedModelCache(page);
+    await seedUntranscribedNote(page);
     await page.reload();
     await page.waitForTimeout(1500);
 
@@ -1112,10 +1135,10 @@ test.describe("Stability", () => {
       });
     });
 
-    // First load — model is not cached, so no eager preload.  Seed the cache
-    // so the reload triggers the preload path and hits the rejection.
+    // Seed an untranscribed note so recovery transcription triggers
+    // loadTranscriber(), which will hit the pipeline rejection.
     await page.goto("/");
-    await seedModelCache(page);
+    await seedUntranscribedNote(page);
     await page.reload();
 
     // Model status should show error
@@ -1283,8 +1306,9 @@ test.describe("Non-Blocking Model Loading", () => {
 
     await page.goto("/");
 
-    // Seed a note and the model cache, then reload.  The cache entry makes
-    // isModelCached() return true so the slow preload triggers on reload.
+    // Seed a completed note and an untranscribed note.  On reload, the
+    // untranscribed note triggers loadTranscriber() (slow mock), while
+    // the completed note should render immediately.
     await page.evaluate(`(async () => {
       const req = indexedDB.open("voiceNotesDB", 1);
       req.onupgradeneeded = () => {
@@ -1308,10 +1332,10 @@ test.describe("Non-Blocking Model Loading", () => {
         };
       });
     })()`);
-    await seedModelCache(page);
+    await seedUntranscribedNote(page);
     await page.reload();
 
-    // Model should be loading (cached model triggers preload)
+    // Model should be loading (recovery transcription triggered it)
     await expect(page.locator("#model-status")).not.toHaveClass("hidden");
 
     // But UI should be fully interactive — notes render and buttons work
@@ -1319,14 +1343,15 @@ test.describe("Non-Blocking Model Loading", () => {
     await expect(page.locator("#record-btn")).toBeVisible();
     await expect(page.locator("#record-btn")).toBeEnabled();
 
-    // Notes are visible even while model loads
+    // Completed note is visible even while model loads
     await expect(
       page.locator('.note-card[data-id="during-load"]'),
     ).toBeVisible();
 
     // Can interact with notes (delete) while model loads
     await page.locator('.note-card[data-id="during-load"] .delete-btn').click();
-    await expect(page.locator(".note-card")).toHaveCount(0);
+    // The untranscribed note still exists
+    await expect(page.locator(".note-card")).toHaveCount(1);
   });
 
   test("existing notes display immediately without waiting for model", async ({
@@ -1383,25 +1408,27 @@ test.describe("Non-Blocking Model Loading", () => {
         };
       });
     })()`);
-    await seedModelCache(page);
+    // Also seed an untranscribed note to trigger model loading on reload
+    await seedUntranscribedNote(page);
     await page.reload();
 
-    // Notes should be visible immediately — not waiting for model
+    // Completed notes should be visible immediately — not waiting for model
+    // (the untranscribed note also renders, but the point is the completed
+    // notes aren't blocked by the slow model load)
     const cards = page.locator(".note-card");
-    await expect(cards).toHaveCount(2, { timeout: 2000 });
-    await expect(cards.nth(0).locator(".note-transcript")).toHaveText(
-      "First note",
-    );
-    await expect(cards.nth(1).locator(".note-transcript")).toHaveText(
-      "Second note",
-    );
+    await expect(cards).toHaveCount(3, { timeout: 2000 });
+    await expect(
+      page.locator('.note-card[data-id="instant-1"] .note-transcript'),
+    ).toHaveText("First note");
+    await expect(
+      page.locator('.note-card[data-id="instant-2"] .note-transcript'),
+    ).toHaveText("Second note");
 
     // Tags and tone should be visible immediately (from stored data)
+    const instant1 = page.locator('.note-card[data-id="instant-1"]');
+    await expect(instant1.locator(".tone-label")).toHaveText("Positive");
     await expect(
-      cards.nth(0).locator(".tone-label"),
-    ).toHaveText("Positive");
-    await expect(
-      cards.nth(0).locator(".note-tag:not(.tone-label)"),
+      instant1.locator(".note-tag:not(.tone-label)"),
     ).toHaveText("work");
   });
 });

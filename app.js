@@ -107,27 +107,6 @@ function hideModelStatus() {
   modelStatusEl.className = "hidden";
 }
 
-/**
- * Check whether the Whisper model files are already present in the browser
- * Cache API (put there by a previous Transformers.js download).  Returns
- * true if at least one model-specific entry exists.
- */
-async function isModelCached() {
-  try {
-    const cacheNames = await caches.keys();
-    for (const name of cacheNames) {
-      const cache = await caches.open(name);
-      const keys = await cache.keys();
-      if (keys.some((r) => r.url && r.url.includes(WHISPER_MODEL))) {
-        return true;
-      }
-    }
-  } catch (_) {
-    // Cache API unavailable (e.g. opaque origin, Firefox private mode)
-  }
-  return false;
-}
-
 function loadTranscriber() {
   if (transcriber) return Promise.resolve(transcriber);
   if (modelLoadingPromise) return modelLoadingPromise;
@@ -912,14 +891,10 @@ async function renderNotes() {
 clearWaveform();
 renderNotes().catch((err) => console.error("Failed to load notes:", err));
 
-// Only preload the Whisper model if it's already cached (fast — just ONNX
-// session init from local files).  If it hasn't been downloaded yet, skip the
-// preload entirely; the model will download on-demand when the user records
-// their first note or when recovery transcription is needed.  This avoids the
-// heavy download+init on every page load which can crash the tab.
-isModelCached().then((cached) => {
-  if (cached) loadTranscriber().catch(() => {});
-});
+// Model loading is lazy — loadTranscriber() is called on-demand when the user
+// records a note or when renderNotes() finds notes needing recovery
+// transcription.  No eager preload: even with cached model files, ONNX session
+// creation is heavy enough to crash the tab on a quick refresh.
 
 // Pre-acquire the mic stream if permission was previously granted so the user
 // doesn't get re-prompted on first record click.

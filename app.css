@@ -227,19 +227,8 @@ header {
   color: var(--accent);
 }
 
-.transcribe-btn {
-  background: var(--surface-2);
-  color: var(--accent);
-}
-
-.transcribe-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .play-btn:active,
-.delete-btn:active,
-.transcribe-btn:active {
+.delete-btn:active {
   opacity: 0.7;
 }
 

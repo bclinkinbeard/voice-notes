@@ -265,7 +265,7 @@ function stopTranscription() {
 
 // --- Transcribe Audio Blob ---
 
-function transcribeAudioBlob(blob) {
+function transcribeAudioBlob(blob, durationSec) {
   if (!SpeechRecognition) return Promise.resolve('');
   if (!blob) return Promise.resolve('');
 
@@ -281,8 +281,8 @@ function transcribeAudioBlob(blob) {
       resolve(result);
     }
 
-    // Safety timeout: resolve after 2x the blob duration or 60s max
-    timeout = setTimeout(finish, 60000);
+    const timeoutMs = Math.min(((durationSec || 30) + 5) * 1000, 120000);
+    timeout = setTimeout(finish, timeoutMs);
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -310,22 +310,62 @@ function transcribeAudioBlob(blob) {
       return;
     }
 
-    // Play the blob so recognition can capture the audio via microphone
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      setTimeout(() => { try { recognition.stop(); } catch (e) {} }, 500);
+    // Decode and play audio silently through Web Audio API so the
+    // microphone (used by SpeechRecognition) can pick it up without
+    // audible speaker output.
+    const reader = new FileReader();
+    reader.onload = () => {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      ctx.decodeAudioData(reader.result).then((buffer) => {
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        // Connect to a gain node set to zero so nothing is audible
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        source.onended = () => {
+          ctx.close().catch(() => {});
+          setTimeout(() => { try { recognition.stop(); } catch (e) {} }, 500);
+        };
+        source.start(0);
+      }).catch(() => {
+        try { recognition.stop(); } catch (e) {}
+      });
     };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
+    reader.onerror = () => {
       try { recognition.stop(); } catch (e) {}
     };
-    audio.play().catch(() => {
-      URL.revokeObjectURL(url);
-      try { recognition.stop(); } catch (e) {}
-    });
+    reader.readAsArrayBuffer(blob);
   });
+}
+
+// --- Process Untranscribed Notes ---
+
+async function processUntranscribedNotes() {
+  if (!SpeechRecognition) return;
+
+  const notes = await getAllNotes();
+  const untranscribed = notes.filter((n) => !n.transcription);
+  if (untranscribed.length === 0) return;
+
+  let updated = false;
+  for (const note of untranscribed) {
+    try {
+      const transcription = await transcribeAudioBlob(note.audioBlob, note.duration);
+      if (transcription) {
+        note.transcription = transcription;
+        await saveNote(note);
+        updated = true;
+      }
+    } catch (e) {
+      // Skip notes that fail to transcribe
+    }
+  }
+
+  if (updated) {
+    await renderNotes();
+  }
 }
 
 // --- Audio Recording ---
@@ -484,35 +524,6 @@ function createNoteCard(note) {
   } else {
     transcriptionEl.textContent = 'No transcription';
     transcriptionEl.classList.add('note-transcription-empty');
-  }
-
-  // Transcribe button for notes without transcription
-  if (!note.transcription && SpeechRecognition) {
-    const transcribeBtn = document.createElement('button');
-    transcribeBtn.type = 'button';
-    transcribeBtn.className = 'transcribe-btn';
-    transcribeBtn.textContent = 'Transcribe';
-    transcribeBtn.addEventListener('click', async () => {
-      transcribeBtn.disabled = true;
-      transcribeBtn.textContent = 'Transcribing...';
-      try {
-        const transcription = await transcribeAudioBlob(note.audioBlob);
-        if (transcription) {
-          note.transcription = transcription;
-          await saveNote(note);
-          transcriptionEl.textContent = transcription;
-          transcriptionEl.classList.remove('note-transcription-empty');
-          transcribeBtn.remove();
-        } else {
-          transcribeBtn.textContent = 'Transcribe';
-          transcribeBtn.disabled = false;
-        }
-      } catch (e) {
-        transcribeBtn.textContent = 'Transcribe';
-        transcribeBtn.disabled = false;
-      }
-    });
-    actions.appendChild(transcribeBtn);
   }
 
   // Assemble card
@@ -677,7 +688,11 @@ if ('serviceWorker' in navigator) {
 
 // --- Initialization ---
 
-renderNotes().catch((err) => {
+renderNotes().then(() => {
+  processUntranscribedNotes().catch((err) => {
+    console.error('Failed to process untranscribed notes:', err);
+  });
+}).catch((err) => {
   console.error('Failed to load notes:', err);
   emptyState.textContent = 'Unable to load notes. Storage may be unavailable.';
 });

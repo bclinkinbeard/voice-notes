@@ -1,4 +1,4 @@
-const CACHE_NAME = 'voice-notes-v7';
+const CACHE_NAME = 'voice-notes-v8';
 const SHELL = [
   './',
   './app.css',

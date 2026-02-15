@@ -206,7 +206,9 @@ function updateNoteAnalysis(noteId, tone, tags) {
   // Update tone dot
   const toneDot = card.querySelector(".note-tone");
   if (toneDot) {
-    toneDot.dataset.tone = tone || "neutral";
+    const t = tone || "neutral";
+    toneDot.dataset.tone = t;
+    toneDot.title = (t === "warm" ? "Positive" : t === "heavy" ? "Negative" : "Neutral") + " tone";
   }
 
   // Replace analyzing indicator with tags (or remove it)
@@ -534,6 +536,7 @@ function createNoteCard(note) {
 
   const hasTranscript = note.transcript && note.transcript.length > 0;
   const toneValue = note.tone || "neutral";
+  const toneLabel = toneValue === "warm" ? "Positive" : toneValue === "heavy" ? "Negative" : "Neutral";
   const hasTags = Array.isArray(note.tags);
   const hasVisibleTags = hasTags && note.tags.length > 0;
 
@@ -564,7 +567,7 @@ function createNoteCard(note) {
     <div class="note-header">
       <span class="note-date">${formatDate(note.createdAt)}</span>
       <div class="note-header-right">
-        <span class="note-tone" data-tone="${toneValue}" aria-hidden="true"></span>
+        <span class="note-tone" data-tone="${toneValue}" title="${toneLabel} tone"></span>
         <span class="note-duration">${formatDuration(note.duration)}</span>
       </div>
     </div>

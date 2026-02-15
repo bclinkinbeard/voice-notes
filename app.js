@@ -263,55 +263,6 @@ function stopTranscription() {
   });
 }
 
-// --- Manual Transcription Input ---
-
-function showTranscriptionInput(note, transcribeBtn, transcriptionEl) {
-  const input = document.createElement('textarea');
-  input.className = 'transcription-input';
-  input.placeholder = 'Play the note, then type what you hear…';
-  input.rows = 3;
-
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.className = 'play-btn';
-  saveBtn.textContent = 'Save';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.type = 'button';
-  cancelBtn.className = 'delete-btn';
-  cancelBtn.textContent = 'Cancel';
-
-  const btnRow = document.createElement('div');
-  btnRow.className = 'note-actions';
-  btnRow.appendChild(saveBtn);
-  btnRow.appendChild(cancelBtn);
-
-  transcribeBtn.replaceWith(input);
-  input.after(btnRow);
-  input.focus();
-
-  function teardown() {
-    btnRow.remove();
-    input.replaceWith(transcribeBtn);
-  }
-
-  cancelBtn.addEventListener('click', teardown);
-
-  saveBtn.addEventListener('click', () => {
-    const text = input.value.trim();
-    if (!text) return;
-    note.transcription = text;
-    saveNote(note).then(() => {
-      transcriptionEl.textContent = text;
-      transcriptionEl.classList.remove('note-transcription-empty');
-      btnRow.remove();
-      input.remove();
-    }).catch(() => {
-      teardown();
-    });
-  });
-}
-
 // --- Audio Recording ---
 
 async function startRecording() {
@@ -456,17 +407,6 @@ function createNoteCard(note) {
   deleteBtn.type = 'button';
   deleteBtn.className = 'delete-btn';
   deleteBtn.textContent = 'Delete';
-
-  if (!note.transcription) {
-    const transcribeBtn = document.createElement('button');
-    transcribeBtn.type = 'button';
-    transcribeBtn.className = 'transcribe-btn';
-    transcribeBtn.textContent = 'Transcribe';
-    transcribeBtn.addEventListener('click', () => {
-      showTranscriptionInput(note, transcribeBtn, transcriptionEl);
-    });
-    actions.appendChild(transcribeBtn);
-  }
 
   actions.appendChild(playBtn);
   actions.appendChild(deleteBtn);

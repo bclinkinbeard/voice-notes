@@ -199,17 +199,9 @@ function updateTranscriptInUI(noteId, transcript) {
   }
 }
 
-function updateNoteAnalysis(noteId, tone, tags) {
+function updateNoteAnalysis(noteId, tags) {
   const card = notesList.querySelector(`[data-id="${noteId}"]`);
   if (!card) return;
-
-  // Update tone dot
-  const toneDot = card.querySelector(".note-tone");
-  if (toneDot) {
-    const t = tone || "neutral";
-    toneDot.dataset.tone = t;
-    toneDot.title = (t === "warm" ? "Positive" : t === "heavy" ? "Negative" : "Neutral") + " tone";
-  }
 
   // Replace analyzing indicator with tags (or remove it)
   const existingTagsContainer = card.querySelector(".note-tags");
@@ -237,59 +229,13 @@ function updateNoteAnalysis(noteId, tone, tags) {
 
 // ─── NLP Analysis (sentiment + tagging) ─────────────────────────────────────
 
-let sentimentClassifier = null;
-let sentimentLoadingPromise = null;
-
-function loadSentimentModel() {
-  if (sentimentClassifier) return Promise.resolve(sentimentClassifier);
-  if (sentimentLoadingPromise) return sentimentLoadingPromise;
-
-  sentimentLoadingPromise = pipeline(
-    "zero-shot-classification",
-    "Xenova/mobilebert-uncased-mnli",
-  )
-    .then((p) => {
-      sentimentClassifier = p;
-      return sentimentClassifier;
-    })
-    .catch((err) => {
-      console.error("Failed to load sentiment model:", err);
-      sentimentLoadingPromise = null;
-      throw err;
-    });
-
-  return sentimentLoadingPromise;
-}
-
 async function analyzeNote(noteId, transcript) {
   // Keyword-based tagging (instant, no model needed)
   const tags = tagTranscript(transcript);
 
-  // Persist and display tags immediately so the UI never stalls
+  // Persist and display tags immediately
   await updateNoteFields(noteId, { tags });
-  updateNoteAnalysis(noteId, "neutral", tags);
-
-  // Sentiment analysis via zero-shot classification (slow — downloads model)
-  let tone = "neutral";
-  try {
-    const classifier = await loadSentimentModel();
-    const result = await classifier(transcript, ["positive", "negative", "neutral"]);
-    const topLabel = result.labels[0];
-    const topScore = result.scores[0];
-
-    if (topScore > 0.5) {
-      if (topLabel === "positive") tone = "warm";
-      else if (topLabel === "negative") tone = "heavy";
-      // "neutral" stays as default
-    }
-  } catch (err) {
-    console.error("Sentiment analysis failed for note", noteId, err);
-    // Tone stays "neutral" on failure — non-blocking
-  }
-
-  // Persist tone and update UI with final result
-  await updateNoteFields(noteId, { tone });
-  updateNoteAnalysis(noteId, tone, tags);
+  updateNoteAnalysis(noteId, tags);
 }
 
 // ─── Audio Recorder ──────────────────────────────────────────────────────────
@@ -535,8 +481,6 @@ function createNoteCard(note) {
   card.dataset.id = note.id;
 
   const hasTranscript = note.transcript && note.transcript.length > 0;
-  const toneValue = note.tone || "neutral";
-  const toneLabel = toneValue === "warm" ? "Positive" : toneValue === "heavy" ? "Negative" : "Neutral";
   const hasTags = Array.isArray(note.tags);
   const hasVisibleTags = hasTags && note.tags.length > 0;
 
@@ -567,7 +511,6 @@ function createNoteCard(note) {
     <div class="note-header">
       <span class="note-date">${formatDate(note.createdAt)}</span>
       <div class="note-header-right">
-        <span class="note-tone" data-tone="${toneValue}" title="${toneLabel} tone"></span>
         <span class="note-duration">${formatDuration(note.duration)}</span>
       </div>
     </div>

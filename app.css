@@ -299,28 +299,6 @@ header h1 {
   gap: 8px;
 }
 
-.note-tone {
-  display: block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #64748b;
-  flex-shrink: 0;
-  transition: background 0.3s ease;
-}
-
-.note-tone[data-tone="warm"] {
-  background: #4ade80;
-}
-
-.note-tone[data-tone="neutral"] {
-  background: #64748b;
-}
-
-.note-tone[data-tone="heavy"] {
-  background: #f59e0b;
-}
-
 /* ─── Auto-Tags ──────────────────────────────────────────────────────────── */
 
 .note-tags {

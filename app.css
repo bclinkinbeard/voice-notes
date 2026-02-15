@@ -67,6 +67,18 @@ header {
   color: var(--accent);
 }
 
+#waveform {
+  width: 280px;
+  height: 64px;
+  margin-bottom: 16px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+#recorder.recording #waveform {
+  opacity: 1;
+}
+
 #record-btn {
   width: 80px;
   height: 80px;

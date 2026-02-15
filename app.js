@@ -7,6 +7,9 @@ const recordHint = document.getElementById('record-hint');
 const notesList = document.getElementById('notes-list');
 const emptyState = document.getElementById('empty-state');
 const timerEl = document.getElementById('timer');
+const recorderEl = document.getElementById('recorder');
+const waveformCanvas = document.getElementById('waveform');
+const waveformCtx = waveformCanvas.getContext('2d');
 
 // --- State ---
 
@@ -14,6 +17,9 @@ let mediaRecorder = null;
 let audioChunks = [];
 let recordingStartTime = null;
 let timerInterval = null;
+let audioContext = null;
+let analyser = null;
+let waveformFrameId = null;
 let currentAudio = null;
 let currentPlayBtn = null;
 let currentProgressFill = null;
@@ -103,6 +109,70 @@ function stopTimer() {
   timerEl.textContent = '0:00';
 }
 
+// --- Waveform Visualization ---
+
+function startWaveform(stream) {
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioContext.createAnalyser();
+  analyser.fftSize = 128;
+
+  const source = audioContext.createMediaStreamSource(stream);
+  source.connect(analyser);
+
+  const bufferLength = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufferLength);
+  const barCount = 32;
+  const canvas = waveformCanvas;
+  const ctx = waveformCtx;
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width = 280 * dpr;
+  canvas.height = 64 * dpr;
+  ctx.scale(dpr, dpr);
+
+  const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+
+  function draw() {
+    waveformFrameId = requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArray);
+
+    ctx.clearRect(0, 0, 280, 64);
+
+    const barWidth = 280 / barCount;
+    const gap = 2;
+    const step = Math.floor(bufferLength / barCount);
+
+    for (let i = 0; i < barCount; i++) {
+      const value = dataArray[i * step] / 255;
+      const barHeight = Math.max(3, value * 58);
+      const x = i * barWidth;
+      const y = (64 - barHeight) / 2;
+
+      ctx.fillStyle = accentColor;
+      ctx.globalAlpha = 0.4 + value * 0.6;
+      ctx.beginPath();
+      ctx.roundRect(x + gap / 2, y, barWidth - gap, barHeight, 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  draw();
+}
+
+function stopWaveform() {
+  if (waveformFrameId) {
+    cancelAnimationFrame(waveformFrameId);
+    waveformFrameId = null;
+  }
+  if (audioContext) {
+    audioContext.close().catch(() => {});
+    audioContext = null;
+    analyser = null;
+  }
+  waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+}
+
 // --- Audio Recording ---
 
 async function startRecording() {
@@ -143,6 +213,7 @@ async function startRecording() {
   mediaRecorder.start(100);
   recordingStartTime = Date.now();
   startTimer();
+  startWaveform(stream);
 }
 
 function stopRecording() {
@@ -161,6 +232,7 @@ function stopRecording() {
       audioChunks = [];
       mediaRecorder = null;
       stopTimer();
+      stopWaveform();
 
       resolve({ blob, duration });
     };
@@ -355,6 +427,7 @@ recordBtn.addEventListener('click', async () => {
     if (isRecording) {
       isRecording = false;
       recordBtn.classList.remove('recording');
+      recorderEl.classList.remove('recording');
       recordHint.textContent = 'Tap to record';
 
       const result = await stopRecording();
@@ -375,11 +448,14 @@ recordBtn.addEventListener('click', async () => {
       await startRecording();
       isRecording = true;
       recordBtn.classList.add('recording');
+      recorderEl.classList.add('recording');
       recordHint.textContent = 'Tap to stop';
     }
   } catch (err) {
     isRecording = false;
     recordBtn.classList.remove('recording');
+    recorderEl.classList.remove('recording');
+    stopWaveform();
     if (typeof MediaRecorder === 'undefined') {
       recordHint.textContent = 'Recording not supported in this browser';
     } else {

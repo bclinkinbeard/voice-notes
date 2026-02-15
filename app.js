@@ -9,7 +9,7 @@ const emptyState = document.getElementById('empty-state');
 const timerEl = document.getElementById('timer');
 const recorderEl = document.getElementById('recorder');
 const waveformCanvas = document.getElementById('waveform');
-const waveformCtx = waveformCanvas.getContext('2d');
+const waveformCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
 
 // --- State ---
 
@@ -112,6 +112,8 @@ function stopTimer() {
 // --- Waveform Visualization ---
 
 function startWaveform(stream) {
+  if (!waveformCtx) return;
+
   audioContext = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 128;
@@ -122,12 +124,11 @@ function startWaveform(stream) {
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
   const barCount = 32;
-  const canvas = waveformCanvas;
   const ctx = waveformCtx;
   const dpr = window.devicePixelRatio || 1;
 
-  canvas.width = 280 * dpr;
-  canvas.height = 64 * dpr;
+  waveformCanvas.width = 280 * dpr;
+  waveformCanvas.height = 64 * dpr;
   ctx.scale(dpr, dpr);
 
   const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
@@ -151,7 +152,11 @@ function startWaveform(stream) {
       ctx.fillStyle = accentColor;
       ctx.globalAlpha = 0.4 + value * 0.6;
       ctx.beginPath();
-      ctx.roundRect(x + gap / 2, y, barWidth - gap, barHeight, 2);
+      if (ctx.roundRect) {
+        ctx.roundRect(x + gap / 2, y, barWidth - gap, barHeight, 2);
+      } else {
+        ctx.rect(x + gap / 2, y, barWidth - gap, barHeight);
+      }
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -170,7 +175,9 @@ function stopWaveform() {
     audioContext = null;
     analyser = null;
   }
-  waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+  if (waveformCtx) {
+    waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+  }
 }
 
 // --- Audio Recording ---

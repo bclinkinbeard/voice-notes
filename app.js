@@ -254,10 +254,13 @@ function loadSentimentModel() {
   if (sentimentClassifier) return Promise.resolve(sentimentClassifier);
   if (sentimentLoadingPromise) return sentimentLoadingPromise;
 
-  sentimentLoadingPromise = pipeline(
-    "zero-shot-classification",
-    "Xenova/mobilebert-uncased-mnli",
-  )
+  // Wait for the transcriber to finish loading first so the two large model
+  // downloads don't compete and choke the ONNX runtime / network.
+  sentimentLoadingPromise = loadTranscriber()
+    .catch(() => {}) // don't fail sentiment if transcriber fails
+    .then(() =>
+      pipeline("zero-shot-classification", "Xenova/mobilebert-uncased-mnli"),
+    )
     .then((p) => {
       sentimentClassifier = p;
       return sentimentClassifier;
@@ -697,9 +700,10 @@ async function renderNotes() {
 
   emptyState.classList.toggle("hidden", notes.length > 0);
 
-  // Re-trigger analysis for notes stuck with a transcript but no tags
+  // Re-trigger analysis for notes that have a transcript but are missing
+  // tags or tone (covers both first-run and upgrade from older versions).
   notes.forEach((note) => {
-    if (note.transcript && !Array.isArray(note.tags)) {
+    if (note.transcript && (!Array.isArray(note.tags) || !note.tone)) {
       analyzeNote(note.id, note.transcript).catch((err) => {
         console.error("Recovery analysis failed for note", note.id, err);
       });

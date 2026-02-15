@@ -188,6 +188,18 @@ header {
   transition: width 0.2s;
 }
 
+.note-transcription {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: var(--text);
+  margin: 8px 0;
+}
+
+.note-transcription-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .note-actions {
   display: flex;
   gap: 8px;

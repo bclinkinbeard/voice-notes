@@ -95,13 +95,17 @@ let modelLoadingPromise = null;
 const modelStatusEl = document.getElementById("model-status");
 
 function showModelStatus(text, className) {
+  if (!modelStatusEl) return;
   modelStatusEl.textContent = text;
   modelStatusEl.className = className || "";
 }
 
 function hideModelStatus() {
+  if (!modelStatusEl) return;
   modelStatusEl.className = "hidden";
 }
+
+const MODEL_LOAD_TIMEOUT_MS = 60000;
 
 function loadTranscriber() {
   if (transcriber) return Promise.resolve(transcriber);
@@ -109,20 +113,27 @@ function loadTranscriber() {
 
   showModelStatus("Loading transcription model...");
 
-  modelLoadingPromise = pipeline(
-    "automatic-speech-recognition",
-    "onnx-community/whisper-tiny.en",
-    {
-      progress_callback: (event) => {
-        if (event.status === "progress" && event.total) {
-          const pct = Math.round((event.loaded / event.total) * 100);
-          showModelStatus(`Downloading model... ${pct}%`);
-        } else if (event.status === "initiate") {
-          showModelStatus("Downloading model...");
-        }
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("Model load timed out")), MODEL_LOAD_TIMEOUT_MS),
+  );
+
+  modelLoadingPromise = Promise.race([
+    pipeline(
+      "automatic-speech-recognition",
+      "onnx-community/whisper-tiny.en",
+      {
+        progress_callback: (event) => {
+          if (event.status === "progress" && event.total) {
+            const pct = Math.round((event.loaded / event.total) * 100);
+            showModelStatus(`Downloading model... ${pct}%`);
+          } else if (event.status === "initiate") {
+            showModelStatus("Downloading model...");
+          }
+        },
       },
-    },
-  )
+    ),
+    timeout,
+  ])
     .then((p) => {
       transcriber = p;
       showModelStatus("Model ready", "ready");
@@ -146,7 +157,9 @@ async function blobToFloat32Audio(blob) {
   try {
     decoded = await audioCtx.decodeAudioData(arrayBuffer);
   } finally {
-    await audioCtx.close().catch(() => {});
+    if (audioCtx.state !== "closed") {
+      await audioCtx.close().catch(() => {});
+    }
   }
 
   const targetRate = 16000;
@@ -201,10 +214,12 @@ function enqueueTranscription(noteId, audioBlob) {
     })
     .catch((err) => {
       console.error("Transcription queue error:", err);
+      pendingTranscriptions.delete(noteId);
     });
 }
 
 function updateTranscriptInUI(noteId, transcript) {
+  if (!notesList) return;
   const card = notesList.querySelector(`[data-id="${noteId}"]`);
   if (!card) return;
 
@@ -226,6 +241,7 @@ function toneText(tone) {
 }
 
 function updateNoteAnalysis(noteId, tone, tags) {
+  if (!notesList) return;
   const card = notesList.querySelector(`[data-id="${noteId}"]`);
   if (!card) return;
 
@@ -340,12 +356,25 @@ async function analyzeNote(noteId, transcript, existingTone) {
 
 let mediaRecorder = null;
 let audioChunks = [];
-let audioContext = null;
+// Persistent AudioContext for the mic — never closed between recordings so the
+// cached stream stays alive and the browser doesn't re-prompt for permission.
+let persistentAudioCtx = null;
 let analyser = null;
 let recordingStartTime = null;
 let timerInterval = null;
 let animationFrameId = null;
 let cachedStream = null;
+
+function getAudioContext() {
+  if (!persistentAudioCtx || persistentAudioCtx.state === "closed") {
+    persistentAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // Resume in case the browser auto-suspended it
+  if (persistentAudioCtx.state === "suspended") {
+    persistentAudioCtx.resume().catch(() => {});
+  }
+  return persistentAudioCtx;
+}
 
 async function acquireMicStream() {
   // Reuse an existing live stream if tracks are still active
@@ -359,10 +388,10 @@ async function acquireMicStream() {
 async function startRecording() {
   const stream = await acquireMicStream();
 
-  // Set up Web Audio analyser for waveform
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  const source = audioContext.createMediaStreamSource(stream);
-  analyser = audioContext.createAnalyser();
+  // Set up Web Audio analyser for waveform using the persistent context
+  const ctx = getAudioContext();
+  const source = ctx.createMediaStreamSource(stream);
+  analyser = ctx.createAnalyser();
   analyser.fftSize = 256;
   source.connect(analyser);
 
@@ -384,7 +413,7 @@ async function startRecording() {
   mediaRecorder.start(100);
   recordingStartTime = Date.now();
 
-  canvas.classList.add("active");
+  if (canvas) canvas.classList.add("active");
   startTimer();
   drawWaveform();
 }
@@ -401,14 +430,12 @@ function stopRecording() {
     const recorder = mediaRecorder;
     const chunks = audioChunks;
     const startTime = recordingStartTime;
-    const ctx = audioContext;
     const frameId = animationFrameId;
 
     // Detach from module-level state immediately so a new recording
     // won't collide with this session's cleanup.
     mediaRecorder = null;
     audioChunks = [];
-    audioContext = null;
     analyser = null;
     animationFrameId = null;
 
@@ -418,16 +445,13 @@ function stopRecording() {
       const duration = Math.round((Date.now() - startTime) / 1000);
 
       // Don't stop stream tracks — keep the mic grant alive for quick re-record.
-      // Tracks are shared via cachedStream and reused by the next recording.
-
-      if (ctx) {
-        ctx.close().catch(() => {});
-      }
+      // Don't close the AudioContext — closing it kills the stream source and
+      // forces the browser to re-prompt for microphone permission.
 
       stopTimer();
-      cancelAnimationFrame(frameId);
+      if (frameId) cancelAnimationFrame(frameId);
       clearWaveform();
-      canvas.classList.remove("active");
+      if (canvas) canvas.classList.remove("active");
 
       resolve({ blob, duration });
     };
@@ -441,18 +465,20 @@ function stopRecording() {
 const timerEl = document.getElementById("timer");
 
 function startTimer() {
+  if (!timerEl) return;
   timerEl.classList.add("active");
   timerInterval = setInterval(updateTimer, 200);
 }
 
 function stopTimer() {
   clearInterval(timerInterval);
+  if (!timerEl) return;
   timerEl.classList.remove("active");
   timerEl.textContent = "0:00";
 }
 
 function updateTimer() {
-  if (!recordingStartTime) return;
+  if (!recordingStartTime || !timerEl) return;
   const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
   const mins = Math.floor(elapsed / 60);
   const secs = String(elapsed % 60).padStart(2, "0");
@@ -462,27 +488,27 @@ function updateTimer() {
 // ─── Waveform Visualization ─────────────────────────────────────────────────
 
 const canvas = document.getElementById("waveform");
-const ctx = canvas.getContext("2d");
+const canvasCtx = canvas ? canvas.getContext("2d") : null;
 
 function drawWaveform() {
-  if (!analyser) return;
+  if (!analyser || !canvasCtx) return;
 
   const bufferLength = analyser.frequencyBinCount;
   const dataArray = new Uint8Array(bufferLength);
 
   function draw() {
-    if (!analyser) return;
+    if (!analyser || !canvasCtx) return;
     animationFrameId = requestAnimationFrame(draw);
     analyser.getByteTimeDomainData(dataArray);
 
-    ctx.fillStyle = getComputedStyle(document.documentElement)
+    canvasCtx.fillStyle = getComputedStyle(document.documentElement)
       .getPropertyValue("--surface")
       .trim();
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "#e94560";
-    ctx.beginPath();
+    canvasCtx.lineWidth = 2;
+    canvasCtx.strokeStyle = "#e94560";
+    canvasCtx.beginPath();
 
     const sliceWidth = canvas.width / bufferLength;
     let x = 0;
@@ -490,23 +516,24 @@ function drawWaveform() {
     for (let i = 0; i < bufferLength; i++) {
       const v = dataArray[i] / 128.0;
       const y = (v * canvas.height) / 2;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      if (i === 0) canvasCtx.moveTo(x, y);
+      else canvasCtx.lineTo(x, y);
       x += sliceWidth;
     }
 
-    ctx.lineTo(canvas.width, canvas.height / 2);
-    ctx.stroke();
+    canvasCtx.lineTo(canvas.width, canvas.height / 2);
+    canvasCtx.stroke();
   }
 
   draw();
 }
 
 function clearWaveform() {
-  ctx.fillStyle = getComputedStyle(document.documentElement)
+  if (!canvasCtx || !canvas) return;
+  canvasCtx.fillStyle = getComputedStyle(document.documentElement)
     .getPropertyValue("--surface")
     .trim();
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 // ─── UI ──────────────────────────────────────────────────────────────────────
@@ -519,53 +546,55 @@ const emptyState = document.getElementById("empty-state");
 let isRecording = false;
 let currentlyPlaying = null;
 
-recordBtn.addEventListener("click", async () => {
-  if (isRecording) {
-    // Stop
-    isRecording = false;
-    recordBtn.classList.remove("recording");
-    recordHint.textContent = "Tap to record";
+if (recordBtn) {
+  recordBtn.addEventListener("click", async () => {
+    if (isRecording) {
+      // Stop
+      isRecording = false;
+      recordBtn.classList.remove("recording");
+      if (recordHint) recordHint.textContent = "Tap to record";
 
-    let result;
-    try {
-      result = await stopRecording();
-    } catch (err) {
-      console.error("Failed to stop recording:", err);
-    }
-
-    if (result && result.duration > 0) {
-      const note = {
-        id: Date.now().toString(),
-        audioBlob: result.blob,
-        transcript: "",
-        duration: result.duration,
-        createdAt: new Date().toISOString(),
-      };
-
+      let result;
       try {
-        await saveNote(note);
+        result = await stopRecording();
       } catch (err) {
-        console.error("Failed to save note:", err);
-        return;
+        console.error("Failed to stop recording:", err);
       }
-      await renderNotes();
 
-      // Transcribe asynchronously — UI updates when done
-      enqueueTranscription(note.id, result.blob);
+      if (result && result.duration > 0) {
+        const note = {
+          id: Date.now().toString(),
+          audioBlob: result.blob,
+          transcript: "",
+          duration: result.duration,
+          createdAt: new Date().toISOString(),
+        };
+
+        try {
+          await saveNote(note);
+        } catch (err) {
+          console.error("Failed to save note:", err);
+          return;
+        }
+        await renderNotes();
+
+        // Transcribe asynchronously — UI updates when done
+        enqueueTranscription(note.id, result.blob);
+      }
+    } else {
+      // Start
+      try {
+        await startRecording();
+        isRecording = true;
+        recordBtn.classList.add("recording");
+        if (recordHint) recordHint.textContent = "Tap to stop";
+      } catch (err) {
+        console.error("Could not start recording:", err);
+        if (recordHint) recordHint.textContent = "Microphone access denied";
+      }
     }
-  } else {
-    // Start
-    try {
-      await startRecording();
-      isRecording = true;
-      recordBtn.classList.add("recording");
-      recordHint.textContent = "Tap to stop";
-    } catch (err) {
-      console.error("Could not start recording:", err);
-      recordHint.textContent = "Microphone access denied";
-    }
-  }
-});
+  });
+}
 
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
@@ -649,12 +678,16 @@ function createNoteCard(note) {
       currentlyPlaying.audio.pause();
       currentlyPlaying.audio.currentTime = 0;
       if (currentlyPlaying.url) URL.revokeObjectURL(currentlyPlaying.url);
-      const otherCard = notesList.querySelector(
-        `[data-id="${currentlyPlaying.noteId}"]`,
-      );
-      if (otherCard) {
-        otherCard.querySelector(".play-btn").innerHTML = "&#9654; Play";
-        otherCard.querySelector(".note-progress").classList.remove("visible");
+      if (notesList) {
+        const otherCard = notesList.querySelector(
+          `[data-id="${currentlyPlaying.noteId}"]`,
+        );
+        if (otherCard) {
+          const otherPlay = otherCard.querySelector(".play-btn");
+          const otherProgress = otherCard.querySelector(".note-progress");
+          if (otherPlay) otherPlay.innerHTML = "&#9654; Play";
+          if (otherProgress) otherProgress.classList.remove("visible");
+        }
       }
       currentlyPlaying = null;
     }
@@ -669,6 +702,11 @@ function createNoteCard(note) {
         currentlyPlaying.audio.pause();
         playBtn.innerHTML = "&#9654; Play";
       }
+      return;
+    }
+
+    if (!note.audioBlob) {
+      console.error("No audio blob for note", note.id);
       return;
     }
 
@@ -718,6 +756,7 @@ function createNoteCard(note) {
     try {
       if (currentlyPlaying && currentlyPlaying.noteId === note.id) {
         currentlyPlaying.audio.pause();
+        if (currentlyPlaying.url) URL.revokeObjectURL(currentlyPlaying.url);
         currentlyPlaying = null;
       }
       await deleteNote(note.id);
@@ -740,10 +779,14 @@ async function renderNotes() {
   const notes = await getAllNotes();
   notes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-  notesList.innerHTML = "";
-  notes.forEach((note) => notesList.appendChild(createNoteCard(note)));
+  if (notesList) {
+    notesList.innerHTML = "";
+    notes.forEach((note) => notesList.appendChild(createNoteCard(note)));
+  }
 
-  emptyState.classList.toggle("hidden", notes.length > 0);
+  if (emptyState) {
+    emptyState.classList.toggle("hidden", notes.length > 0);
+  }
 
   // Re-transcribe notes whose transcription was interrupted (e.g. page
   // reload before Whisper finished).  The audio blob is still in IndexedDB.
@@ -785,15 +828,17 @@ loadTranscriber().catch(() => {});
 
 // Pre-acquire the mic stream if permission was previously granted so the user
 // doesn't get re-prompted on first record click.
-if (navigator.permissions) {
+if (navigator.permissions && typeof navigator.permissions.query === "function") {
   navigator.permissions.query({ name: "microphone" }).then((status) => {
     if (status.state === "granted") {
       acquireMicStream().catch(() => {});
     }
-    status.addEventListener("change", () => {
-      if (status.state === "denied") {
-        recordHint.textContent = "Microphone access denied";
-      }
-    });
+    if (typeof status.addEventListener === "function") {
+      status.addEventListener("change", () => {
+        if (status.state === "denied" && recordHint) {
+          recordHint.textContent = "Microphone access denied";
+        }
+      });
+    }
   }).catch(() => {});
 }

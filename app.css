@@ -318,6 +318,20 @@ header h1 {
   user-select: none;
 }
 
+.tone-label {
+  font-weight: 600;
+}
+
+.tone-warm {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+.tone-heavy {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
 /* ─── NLP Analyzing State ────────────────────────────────────────────────── */
 
 .analyzing-text {

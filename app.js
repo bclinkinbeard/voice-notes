@@ -199,22 +199,40 @@ function updateTranscriptInUI(noteId, transcript) {
   }
 }
 
-function updateNoteAnalysis(noteId, tags) {
+function toneText(tone) {
+  if (tone === "warm") return "Positive";
+  if (tone === "heavy") return "Negative";
+  return null; // neutral — don't show a label
+}
+
+function updateNoteAnalysis(noteId, tone, tags) {
   const card = notesList.querySelector(`[data-id="${noteId}"]`);
   if (!card) return;
 
-  // Replace analyzing indicator with tags (or remove it)
+  // Build new tags row with tone label + tag chips
+  const hasContent = (tags && tags.length > 0) || toneText(tone);
   const existingTagsContainer = card.querySelector(".note-tags");
 
-  if (tags && tags.length > 0) {
+  if (hasContent) {
     const tagsDiv = document.createElement("div");
     tagsDiv.className = "note-tags";
-    tags.slice(0, 3).forEach((t) => {
+
+    const label = toneText(tone);
+    if (label) {
       const span = document.createElement("span");
-      span.className = "note-tag";
-      span.textContent = t;
+      span.className = "note-tag tone-label tone-" + tone;
+      span.textContent = label;
       tagsDiv.appendChild(span);
-    });
+    }
+
+    if (tags) {
+      tags.slice(0, 3).forEach((t) => {
+        const span = document.createElement("span");
+        span.className = "note-tag";
+        span.textContent = t;
+        tagsDiv.appendChild(span);
+      });
+    }
 
     if (existingTagsContainer) {
       existingTagsContainer.replaceWith(tagsDiv);
@@ -229,13 +247,61 @@ function updateNoteAnalysis(noteId, tags) {
 
 // ─── NLP Analysis (sentiment + tagging) ─────────────────────────────────────
 
+let sentimentClassifier = null;
+let sentimentLoadingPromise = null;
+
+function loadSentimentModel() {
+  if (sentimentClassifier) return Promise.resolve(sentimentClassifier);
+  if (sentimentLoadingPromise) return sentimentLoadingPromise;
+
+  sentimentLoadingPromise = pipeline(
+    "zero-shot-classification",
+    "Xenova/mobilebert-uncased-mnli",
+  )
+    .then((p) => {
+      sentimentClassifier = p;
+      return sentimentClassifier;
+    })
+    .catch((err) => {
+      console.error("Failed to load sentiment model:", err);
+      sentimentLoadingPromise = null;
+      throw err;
+    });
+
+  return sentimentLoadingPromise;
+}
+
 async function analyzeNote(noteId, transcript) {
   // Keyword-based tagging (instant, no model needed)
   const tags = tagTranscript(transcript);
 
-  // Persist and display tags immediately
+  // Persist and display tags immediately so the UI never stalls
   await updateNoteFields(noteId, { tags });
-  updateNoteAnalysis(noteId, tags);
+  updateNoteAnalysis(noteId, null, tags);
+
+  // Sentiment analysis via zero-shot classification (slow — downloads model)
+  let tone = "neutral";
+  try {
+    const classifier = await loadSentimentModel();
+    const result = await classifier(transcript, [
+      "positive",
+      "negative",
+      "neutral",
+    ]);
+    const topLabel = result.labels[0];
+    const topScore = result.scores[0];
+
+    if (topScore > 0.5) {
+      if (topLabel === "positive") tone = "warm";
+      else if (topLabel === "negative") tone = "heavy";
+    }
+  } catch (err) {
+    console.error("Sentiment analysis failed for note", noteId, err);
+  }
+
+  // Persist tone and update UI with final result
+  await updateNoteFields(noteId, { tone });
+  updateNoteAnalysis(noteId, tone, tags);
 }
 
 // ─── Audio Recorder ──────────────────────────────────────────────────────────
@@ -491,7 +557,8 @@ function createNoteCard(note) {
     transcriptHTML = `<div class="note-transcript transcribing">Transcribing...</div>`;
   }
 
-  // Tags section
+  // Tags + tone section
+  const toneLabel = toneText(note.tone);
   let tagsHTML = "";
   if (hasTranscript && !hasTags) {
     // Transcript exists but analysis not done yet
@@ -499,12 +566,17 @@ function createNoteCard(note) {
       <div class="note-tags analyzing">
         <span class="analyzing-text">Analyzing...</span>
       </div>`;
-  } else if (hasVisibleTags) {
-    const tagChips = note.tags
-      .slice(0, 3)
-      .map((t) => `<span class="note-tag">${escapeHtml(t)}</span>`)
-      .join("");
-    tagsHTML = `<div class="note-tags">${tagChips}</div>`;
+  } else if (hasVisibleTags || toneLabel) {
+    const tonePill = toneLabel
+      ? `<span class="note-tag tone-label tone-${note.tone}">${escapeHtml(toneLabel)}</span>`
+      : "";
+    const tagChips = hasVisibleTags
+      ? note.tags
+          .slice(0, 3)
+          .map((t) => `<span class="note-tag">${escapeHtml(t)}</span>`)
+          .join("")
+      : "";
+    tagsHTML = `<div class="note-tags">${tonePill}${tagChips}</div>`;
   }
 
   card.innerHTML = `

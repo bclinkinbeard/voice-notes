@@ -129,11 +129,7 @@ function startTranscription() {
     }
   };
 
-  recognition.onerror = (e) => {
-    if (e.error !== 'aborted' && e.error !== 'no-speech') {
-      console.error('Speech recognition error:', e.error);
-    }
-  };
+  recognition.onerror = () => {};
 
   recognition.start();
   speechRecognition = recognition;
@@ -147,16 +143,23 @@ function stopTranscription() {
   }
 
   return new Promise((resolve) => {
-    const recognition = speechRecognition;
-    speechRecognition = null;
-
-    recognition.onend = () => {
+    function done() {
       const result = transcriptionResult;
       transcriptionResult = '';
       resolve(result);
-    };
+    }
 
-    recognition.stop();
+    const recognition = speechRecognition;
+    speechRecognition = null;
+
+    recognition.onend = done;
+    recognition.onerror = done;
+
+    try {
+      recognition.stop();
+    } catch (e) {
+      done();
+    }
   });
 }
 
@@ -209,23 +212,25 @@ async function stopRecording() {
   }
 
   const recorder = mediaRecorder;
+
+  const blobPromise = new Promise((resolve) => {
+    recorder.onstop = () => {
+      resolve(new Blob(audioChunks, { type: recorder.mimeType }));
+    };
+  });
+
   recorder.stop();
 
-  const [transcription, blob, duration] = await Promise.all([
+  const [transcription, blob] = await Promise.all([
     stopTranscription(),
-    new Promise((resolve) => {
-      recorder.onstop = () => {
-        resolve(new Blob(audioChunks, { type: recorder.mimeType }));
-      };
-    })
-  ]).then(([text, audioBlob]) => {
-    const dur = Math.round((Date.now() - recordingStartTime) / 1000);
-    recorder.stream.getTracks().forEach((t) => t.stop());
-    audioChunks = [];
-    mediaRecorder = null;
-    stopTimer();
-    return [text, audioBlob, dur];
-  });
+    blobPromise
+  ]);
+
+  const duration = Math.round((Date.now() - recordingStartTime) / 1000);
+  recorder.stream.getTracks().forEach((t) => t.stop());
+  audioChunks = [];
+  mediaRecorder = null;
+  stopTimer();
 
   return { blob, duration, transcription };
 }

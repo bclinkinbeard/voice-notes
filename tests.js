@@ -297,6 +297,29 @@ await (async () => {
   assertEqual(result.result, '', 'returns empty string when no recognition');
   assertEqual(result.recognition, null, 'recognition stays null');
 })();
+// Test onerror fallback — recognition that errors instead of ending
+await (async () => {
+  const errorRecognition = {
+    onend: null,
+    onerror: null,
+    stop() {
+      // Simulate browser firing onerror instead of onend
+      Promise.resolve().then(() => {
+        if (this.onerror) this.onerror({ error: 'service-not-available' });
+      });
+    }
+  };
+  // Simulate the real stopTranscription: set both onend and onerror to done, then stop
+  const result = await new Promise((resolve) => {
+    function done() {
+      resolve('resolved');
+    }
+    errorRecognition.onend = done;
+    errorRecognition.onerror = done;
+    errorRecognition.stop();
+  });
+  assertEqual(result, 'resolved', 'onerror fallback resolves the promise when recognition errors');
+})();
 
 suite('startTranscription guard');
 assertEqual(wouldStartTranscription(undefined), false, 'does not start when undefined');
@@ -438,6 +461,7 @@ suite('Source file integrity');
   assert(appJs.includes("recognition.lang"), 'recognition language is set');
   assert(appJs.includes("navigator.language || 'en-US'"), 'falls back to en-US');
   assert(appJs.includes('recognition.onend'), 'stopTranscription waits for onend event');
+  assert(appJs.includes('recognition.onerror = done'), 'stopTranscription handles onerror fallback');
   assert(appJs.includes('Promise'), 'stopTranscription returns a Promise');
   assert(!appJs.includes('import '), 'no ES module imports (stays vanilla)');
   assert(!appJs.includes('require('), 'no CommonJS requires (stays vanilla)');

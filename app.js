@@ -700,6 +700,14 @@ async function renderNotes() {
 
   emptyState.classList.toggle("hidden", notes.length > 0);
 
+  // Re-transcribe notes whose transcription was interrupted (e.g. page
+  // reload before Whisper finished).  The audio blob is still in IndexedDB.
+  notes.forEach((note) => {
+    if (!note.transcript && note.audioBlob) {
+      enqueueTranscription(note.id, note.audioBlob);
+    }
+  });
+
   // Re-trigger analysis for notes that have a transcript but are missing
   // tags or tone (covers both first-run and upgrade from older versions).
   notes.forEach((note) => {

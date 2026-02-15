@@ -276,6 +276,7 @@ function transcribeViaPlayback(note, transcribeBtn, transcriptionEl) {
   let result = '';
   const url = URL.createObjectURL(note.audioBlob);
   const audio = new Audio(url);
+  audio.volume = 1.0;
 
   const recognition = new SpeechRecognition();
   recognition.continuous = true;
@@ -321,19 +322,21 @@ function transcribeViaPlayback(note, transcribeBtn, transcriptionEl) {
   recognition.onerror = () => {};
 
   audio.onended = () => {
-    setTimeout(finish, 1000);
+    setTimeout(finish, 1500);
   };
 
   audio.onerror = finish;
 
-  try {
-    recognition.start();
-  } catch (e) {
-    finish();
-    return;
-  }
-
-  audio.play().catch(finish);
+  // Start audio playback FIRST so the user gesture is consumed by play().
+  // Then start recognition — it reuses the mic permission already granted.
+  audio.play().then(() => {
+    try {
+      recognition.start();
+    } catch (e) {
+      // Recognition unavailable — let audio finish, then clean up
+      audio.onended = finish;
+    }
+  }).catch(finish);
 }
 
 // --- Audio Recording ---

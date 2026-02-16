@@ -438,6 +438,13 @@ function stopTranscription() {
   });
 }
 
+// --- Transcription Cleaning ---
+
+function cleanFillersFromTranscription(text) {
+  if (!text) return text;
+  return text.replace(/\b[Uu]mm?\b/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 // --- Transcription Splitting ---
 
 function splitTranscriptionOnAnd(text) {
@@ -1257,7 +1264,8 @@ recordBtn.addEventListener('click', async () => {
         const list = await getList(currentListId);
         const isAccomplish = list && list.mode === 'accomplish';
         const rawTranscription = result.transcription || '';
-        const transcription = isAccomplish ? rawTranscription : formatTranscriptionSegment(rawTranscription) || '';
+        const cleaned = isAccomplish ? cleanFillersFromTranscription(rawTranscription) : rawTranscription;
+        const transcription = isAccomplish ? cleaned : formatTranscriptionSegment(cleaned) || '';
         const parts = isAccomplish ? splitTranscriptionOnAnd(transcription) : [transcription];
         const now = new Date().toISOString();
 
@@ -1267,8 +1275,8 @@ recordBtn.addEventListener('click', async () => {
         for (let i = 0; i < parts.length; i++) {
           const note = {
             id: crypto.randomUUID(),
-            audioBlob: i === 0 ? result.blob : null,
-            duration: i === 0 ? result.duration : 0,
+            audioBlob: isAccomplish ? null : (i === 0 ? result.blob : null),
+            duration: isAccomplish ? 0 : (i === 0 ? result.duration : 0),
             transcription: parts[i] || '',
             createdAt: now,
             listId: currentListId,

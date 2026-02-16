@@ -116,6 +116,12 @@ function wouldStartTranscription(SpeechRecognitionCtor) {
   return true;
 }
 
+// Replicate cleanFillersFromTranscription from app.js
+function cleanFillersFromTranscription(text) {
+  if (!text) return text;
+  return text.replace(/\b[Uu]mm?\b/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 // Replicate splitTranscriptionOnAnd from app.js
 function splitTranscriptionOnAnd(text) {
   if (!text) return [text];
@@ -1174,6 +1180,17 @@ await (async () => {
 // splitTranscriptionOnAnd tests
 // ============================================================
 
+suite('cleanFillersFromTranscription — removes umm');
+assertEqual(cleanFillersFromTranscription('umm milk and eggs'), 'milk and eggs', 'removes leading umm');
+assertEqual(cleanFillersFromTranscription('milk umm and eggs'), 'milk and eggs', 'removes mid-sentence umm');
+assertEqual(cleanFillersFromTranscription('milk and umm eggs'), 'milk and eggs', 'removes umm before word');
+assertEqual(cleanFillersFromTranscription('um milk and um eggs'), 'milk and eggs', 'removes um variant');
+assertEqual(cleanFillersFromTranscription('Umm I need bread'), 'I need bread', 'removes capitalized Umm');
+assertEqual(cleanFillersFromTranscription('bread'), 'bread', 'no change when no filler');
+assertEqual(cleanFillersFromTranscription(''), '', 'empty string unchanged');
+assertEqual(cleanFillersFromTranscription(null), null, 'null returns null');
+assertEqual(cleanFillersFromTranscription('yummy drums'), 'yummy drums', 'does not remove umm within words');
+
 suite('splitTranscriptionOnAnd — basic splitting');
 assertDeepEqual(splitTranscriptionOnAnd('meat and potatoes and cheese'), ['meat', 'potatoes', 'cheese'], 'splits three items on "and"');
 assertDeepEqual(splitTranscriptionOnAnd('apples and oranges'), ['apples', 'oranges'], 'splits two items');
@@ -1396,6 +1413,9 @@ suite('Source file integrity');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
   assert(indexHtml.includes('type="module"'), 'index.html uses type="module" for app.js');
   assert(indexHtml.includes('filter-bar'), 'index.html has filter-bar element');
+  assert(indexHtml.includes('how-to-use'), 'index.html has how-to-use element');
+
+  assert(appCss.includes('#how-to-use'), 'app.css defines #how-to-use');
 }
 
 suite('Source file integrity — lists feature');
@@ -1427,6 +1447,7 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes("mode === 'accomplish'"), 'app.js checks accomplish mode');
   assert(appJs.includes('splitTranscriptionOnAnd'), 'app.js defines splitTranscriptionOnAnd');
   assert(appJs.includes('hasAudio'), 'app.js checks hasAudio for conditional rendering');
+  assert(appJs.includes('cleanFillersFromTranscription'), 'app.js defines cleanFillersFromTranscription');
   assert(appJs.includes('categorizeNote'), 'app.js uses categorizeNote');
   assert(appJs.includes('analyzeSentiment'), 'app.js uses analyzeSentiment');
   assert(appJs.includes('processUnanalyzedNotes'), 'app.js defines processUnanalyzedNotes');
@@ -1455,10 +1476,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v21'), 'index.html version is v21');
+  assert(indexHtml.includes('v22'), 'index.html version is v22');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v21'), 'sw.js cache version is v21');
+  assert(swJs.includes('voice-notes-v22'), 'sw.js cache version is v22');
 }
 
 } // end runTests

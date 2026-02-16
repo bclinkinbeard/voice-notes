@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Notes — Design Variations Showboat</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0e0e14;
+      color: #e8e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100dvh;
+      padding: 24px 16px 48px;
+    }
+
+    .page-header {
+      text-align: center;
+      max-width: 640px;
+      margin: 0 auto 40px;
+    }
+    .page-header h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .page-header p {
+      color: #888;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    @media (min-width: 768px) {
+      .grid { grid-template-columns: repeat(3, 1fr); }
+    }
+
+    /* === Theme Card === */
+    .theme-card {
+      border-radius: 16px;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+    .theme-card:hover {
+      transform: translateY(-4px);
+    }
+
+    /* Aurora card */
+    .theme-card.aurora {
+      background: #1c1017;
+      border: 1px solid #3d2433;
+    }
+    .theme-card.aurora:hover {
+      box-shadow: 0 8px 32px rgba(244, 132, 95, 0.2);
+    }
+    .theme-card.aurora .preview-bar {
+      height: 6px;
+      background: linear-gradient(135deg, #f4845f 0%, #f9c74f 100%);
+    }
+
+    /* Frost card */
+    .theme-card.frost {
+      background: #f4f5f7;
+      border: 1px solid #e8eaed;
+      color: #1a1a1a;
+    }
+    .theme-card.frost:hover {
+      box-shadow: 0 8px 32px rgba(37, 99, 235, 0.15);
+    }
+    .theme-card.frost .preview-bar {
+      height: 6px;
+      background: #2563eb;
+    }
+
+    /* Neon card */
+    .theme-card.neon {
+      background: #0a0a0f;
+      border: 1px solid #1a1a25;
+    }
+    .theme-card.neon:hover {
+      box-shadow: 0 8px 32px rgba(0, 229, 255, 0.15);
+    }
+    .theme-card.neon .preview-bar {
+      height: 6px;
+      background: linear-gradient(90deg, #00e5ff, #b388ff);
+    }
+
+    .theme-card-body {
+      padding: 24px;
+    }
+    .theme-name {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .theme-card.aurora .theme-name {
+      background: linear-gradient(135deg, #f4845f 0%, #f9c74f 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .theme-card.frost .theme-name {
+      color: #2563eb;
+    }
+    .theme-card.neon .theme-name {
+      color: #00e5ff;
+      text-shadow: 0 0 12px rgba(0, 229, 255, 0.3);
+    }
+    .theme-desc {
+      font-size: 0.85rem;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .theme-card.frost .theme-desc { color: #6b7280; }
+    .theme-card.aurora .theme-desc, .theme-card.neon .theme-desc { color: #888; }
+
+    /* Mini preview */
+    .mini-preview {
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .theme-card.aurora .mini-preview { background: #2a1a22; }
+    .theme-card.frost .mini-preview { background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .theme-card.neon .mini-preview { background: #111118; border: 1px solid #1a1a25; }
+
+    .mini-header {
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .theme-card.aurora .mini-header { color: #f5ebe0; }
+    .theme-card.frost .mini-header { color: #1a1a1a; }
+    .theme-card.neon .mini-header { color: #e8e8f0; }
+
+    .mini-card {
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 6px;
+      font-size: 0.7rem;
+      line-height: 1.4;
+    }
+    .theme-card.aurora .mini-card { background: #1c1017; color: #b5a9a0; border-left: 2px solid #f4845f; }
+    .theme-card.frost .mini-card { background: #f4f5f7; color: #6b7280; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .theme-card.neon .mini-card { background: #0a0a0f; color: #6b6b80; border: 1px solid #1a1a25; }
+
+    .mini-record-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      margin: 12px auto 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .theme-card.aurora .mini-record-btn {
+      background: #2a1a22;
+      border: 2px solid transparent;
+      background-image: linear-gradient(#2a1a22, #2a1a22), linear-gradient(135deg, #f4845f, #f9c74f);
+      background-origin: border-box;
+      background-clip: padding-box, border-box;
+    }
+    .theme-card.frost .mini-record-btn {
+      background: #fff;
+      border: 2px solid #2563eb;
+      box-shadow: 0 2px 8px rgba(37,99,235,0.1);
+    }
+    .theme-card.neon .mini-record-btn {
+      background: #111118;
+      border: 2px solid #00e5ff;
+      box-shadow: 0 0 12px rgba(0,229,255,0.2);
+    }
+    .mini-record-icon {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+    }
+    .theme-card.aurora .mini-record-icon { background: linear-gradient(135deg, #f4845f, #f9c74f); }
+    .theme-card.frost .mini-record-icon { background: #2563eb; }
+    .theme-card.neon .mini-record-icon { background: #00e5ff; }
+
+    /* Tags */
+    .theme-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .theme-tag {
+      font-size: 0.65rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .theme-card.aurora .theme-tag { background: #3d2433; color: #f4845f; }
+    .theme-card.frost .theme-tag { background: #dbeafe; color: #2563eb; }
+    .theme-card.neon .theme-tag { background: #1a1a25; color: #00e5ff; border: 1px solid rgba(0,229,255,0.15); }
+
+    /* CTA */
+    .theme-cta {
+      display: block;
+      text-align: center;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .theme-cta:active { opacity: 0.8; }
+    .theme-card.aurora .theme-cta {
+      background: linear-gradient(135deg, #f4845f, #f9c74f);
+      color: #1c1017;
+    }
+    .theme-card.frost .theme-cta {
+      background: #2563eb;
+      color: #fff;
+    }
+    .theme-card.neon .theme-cta {
+      background: transparent;
+      color: #00e5ff;
+      border: 1px solid #00e5ff;
+      box-shadow: 0 0 8px rgba(0,229,255,0.15);
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      margin-top: 48px;
+      color: #555;
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-header">
+    <h1>Design Variations</h1>
+    <p>Three visual directions for Voice Notes. Each mockup shows the full app — lists view, recording interface, capture-mode notes, and accomplish-mode task cards. Click any card to view the full mockup.</p>
+  </div>
+
+  <div class="grid">
+    <!-- Aurora -->
+    <a class="theme-card aurora" href="aurora.html">
+      <div class="preview-bar"></div>
+      <div class="theme-card-body">
+        <h2 class="theme-name">Aurora</h2>
+        <p class="theme-desc">Warm amber-to-coral gradients on a deep burgundy background. Soft rounded cards with colored left-border accents. Inviting and organic.</p>
+
+        <div class="theme-tags">
+          <span class="theme-tag">Warm</span>
+          <span class="theme-tag">Gradient</span>
+          <span class="theme-tag">Organic</span>
+        </div>
+
+        <div class="mini-preview">
+          <div class="mini-header">Voice Notes</div>
+          <div class="mini-card">Remember to call the dentist...</div>
+          <div class="mini-card">Share mockups with team...</div>
+          <div class="mini-record-btn"><span class="mini-record-icon"></span></div>
+        </div>
+
+        <span class="theme-cta">View Full Mockup</span>
+      </div>
+    </a>
+
+    <!-- Frost -->
+    <a class="theme-card frost" href="frost.html">
+      <div class="preview-bar"></div>
+      <div class="theme-card-body">
+        <h2 class="theme-name">Frost</h2>
+        <p class="theme-desc">Clean white surfaces with crisp drop shadows and blue accents. Professional, minimal, and instantly familiar. Great readability in daylight.</p>
+
+        <div class="theme-tags">
+          <span class="theme-tag">Light</span>
+          <span class="theme-tag">Minimal</span>
+          <span class="theme-tag">Clean</span>
+        </div>
+
+        <div class="mini-preview">
+          <div class="mini-header">Voice Notes</div>
+          <div class="mini-card">Remember to call the dentist...</div>
+          <div class="mini-card">Share mockups with team...</div>
+          <div class="mini-record-btn"><span class="mini-record-icon"></span></div>
+        </div>
+
+        <span class="theme-cta">View Full Mockup</span>
+      </div>
+    </a>
+
+    <!-- Neon -->
+    <a class="theme-card neon" href="neon.html">
+      <div class="preview-bar"></div>
+      <div class="theme-card-body">
+        <h2 class="theme-name">Neon</h2>
+        <p class="theme-desc">Cyberpunk-inspired with electric cyan and violet on near-black. Monospace type, neon glow effects, and a subtle scanline overlay. Bold and distinctive.</p>
+
+        <div class="theme-tags">
+          <span class="theme-tag">Cyberpunk</span>
+          <span class="theme-tag">Glow</span>
+          <span class="theme-tag">Bold</span>
+        </div>
+
+        <div class="mini-preview">
+          <div class="mini-header">Voice Notes</div>
+          <div class="mini-card">Remember to call the dentist...</div>
+          <div class="mini-card">Share mockups with team...</div>
+          <div class="mini-record-btn"><span class="mini-record-icon"></span></div>
+        </div>
+
+        <span class="theme-cta">View Full Mockup</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="footer">
+    Voice Notes &mdash; Design Exploration &mdash; Feb 2026
+  </div>
+</body>
+</html>

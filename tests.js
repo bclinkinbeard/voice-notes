@@ -76,8 +76,7 @@ function accumulateTranscription(resultSets) {
       if (resultSet[i].isFinal) {
         const text = resultSet[i][0].transcript.trim();
         if (text) {
-          const formatted = formatTranscriptionSegment(text);
-          transcriptionResult += (transcriptionResult ? ' ' : '') + formatted;
+          transcriptionResult += (transcriptionResult ? ' ' : '') + text;
         }
       }
     }
@@ -495,7 +494,7 @@ assertEqual(formatTranscriptionSegment(''), '', 'empty string returns empty');
 assertEqual(formatTranscriptionSegment(null), null, 'null returns null');
 assertEqual(formatTranscriptionSegment(undefined), undefined, 'undefined returns undefined');
 
-suite('Transcription result accumulation');
+suite('Transcription result accumulation (raw, no formatting)');
 assertEqual(
   accumulateTranscription([]),
   '',
@@ -503,29 +502,29 @@ assertEqual(
 );
 assertEqual(
   accumulateTranscription([[{ isFinal: true, 0: { transcript: 'Hello world' } }]]),
-  'Hello world.',
-  'single final result gets period'
+  'Hello world',
+  'single final result accumulated raw'
 );
 assertEqual(
   accumulateTranscription([
     [{ isFinal: true, 0: { transcript: 'Hello' } }],
     [{ isFinal: true, 0: { transcript: 'world' } }]
   ]),
-  'Hello. World.',
-  'multiple batches capitalized and punctuated'
+  'Hello world',
+  'multiple batches joined with space'
 );
 assertEqual(
   accumulateTranscription([
     [{ isFinal: false, 0: { transcript: 'Hel' } }],
     [{ isFinal: true, 0: { transcript: 'Hello' } }]
   ]),
-  'Hello.',
+  'Hello',
   'interim results skipped'
 );
 assertEqual(
   accumulateTranscription([[{ isFinal: true, 0: { transcript: '  spaced  ' } }]]),
-  'Spaced.',
-  'results are trimmed and formatted'
+  'spaced',
+  'results are trimmed'
 );
 assertEqual(
   accumulateTranscription([[{ isFinal: true, 0: { transcript: '' } }]]),
@@ -545,8 +544,8 @@ assertEqual(
       { isFinal: false, 0: { transcript: 'Nope' } }
     ]
   ]),
-  'First. Second.',
-  'multiple results in single batch: finals punctuated, interim skipped'
+  'First Second',
+  'multiple results in single batch: finals joined, interim skipped'
 );
 
 suite('stopTranscription logic (async)');
@@ -1456,10 +1455,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v20'), 'index.html version is v20');
+  assert(indexHtml.includes('v21'), 'index.html version is v21');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v20'), 'sw.js cache version is v20');
+  assert(swJs.includes('voice-notes-v21'), 'sw.js cache version is v21');
 }
 
 } // end runTests

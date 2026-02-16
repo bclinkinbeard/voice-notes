@@ -102,6 +102,13 @@ function wouldStartTranscription(SpeechRecognitionCtor) {
   return true;
 }
 
+// Replicate splitTranscriptionOnAnd from app.js
+function splitTranscriptionOnAnd(text) {
+  if (!text) return [text];
+  const parts = text.split(/\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [text];
+}
+
 // Minimal DOM element mock
 function createElement(tag) {
   const classes = new Set();
@@ -208,31 +215,39 @@ function createNoteCard(note, list) {
   }
   content.appendChild(transcriptionEl);
 
-  const meta = createElement('div');
-  meta.className = 'note-meta';
-  meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
-  content.appendChild(meta);
+  const hasAudio = !!note.audioBlob;
 
-  const progress = createElement('div');
-  progress.className = 'note-progress';
-  const progressFill = createElement('div');
-  progressFill.className = 'note-progress-fill';
-  progress.appendChild(progressFill);
-  content.appendChild(progress);
+  if (hasAudio) {
+    const meta = createElement('div');
+    meta.className = 'note-meta';
+    meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
+    content.appendChild(meta);
+
+    const progress = createElement('div');
+    progress.className = 'note-progress';
+    const progressFill = createElement('div');
+    progressFill.className = 'note-progress-fill';
+    progress.appendChild(progressFill);
+    content.appendChild(progress);
+  }
 
   card.appendChild(content);
 
   const actions = createElement('div');
   actions.className = 'note-actions';
-  const playBtn = createElement('button');
-  playBtn.type = 'button';
-  playBtn.className = 'play-btn';
-  playBtn.textContent = '\u25B6';
+
+  if (hasAudio) {
+    const playBtn = createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'play-btn';
+    playBtn.textContent = '\u25B6';
+    actions.appendChild(playBtn);
+  }
+
   const deleteBtn = createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'delete-btn';
   deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
-  actions.appendChild(playBtn);
   actions.appendChild(deleteBtn);
   card.appendChild(actions);
 
@@ -598,7 +613,7 @@ suite('Note card — legacy note (no transcription field)');
 
 suite('Note card — meta line shows duration and date');
 {
-  const note = { id: 'test-dur', duration: 125, transcription: 'hi', createdAt: '2026-02-15T12:00:00.000Z' };
+  const note = { id: 'test-dur', audioBlob: { size: 100 }, duration: 125, transcription: 'hi', createdAt: '2026-02-15T12:00:00.000Z' };
   const card = createNoteCard(note);
   const meta = card.querySelector('.note-meta');
   assert(meta !== null, 'card has meta element');
@@ -608,7 +623,7 @@ suite('Note card — meta line shows duration and date');
 
 suite('Note card — action buttons');
 {
-  const note = { id: 'test-btn', duration: 5, transcription: '', createdAt: '2026-02-15T12:00:00.000Z' };
+  const note = { id: 'test-btn', audioBlob: { size: 50 }, duration: 5, transcription: '', createdAt: '2026-02-15T12:00:00.000Z' };
   const card = createNoteCard(note);
   const playBtn = card.querySelector('.play-btn');
   const deleteBtn = card.querySelector('.delete-btn');
@@ -1072,6 +1087,65 @@ await (async () => {
 })();
 
 // ============================================================
+// splitTranscriptionOnAnd tests
+// ============================================================
+
+suite('splitTranscriptionOnAnd — basic splitting');
+assertDeepEqual(splitTranscriptionOnAnd('meat and potatoes and cheese'), ['meat', 'potatoes', 'cheese'], 'splits three items on "and"');
+assertDeepEqual(splitTranscriptionOnAnd('apples and oranges'), ['apples', 'oranges'], 'splits two items');
+assertDeepEqual(splitTranscriptionOnAnd('just one item'), ['just one item'], 'no "and" returns single item');
+assertDeepEqual(splitTranscriptionOnAnd('bread AND butter'), ['bread', 'butter'], 'case-insensitive split');
+assertDeepEqual(splitTranscriptionOnAnd('salt And pepper'), ['salt', 'pepper'], 'mixed-case "And" splits');
+assertDeepEqual(splitTranscriptionOnAnd(''), [''], 'empty string returns array with empty string');
+assertDeepEqual(splitTranscriptionOnAnd(null), [null], 'null returns array with null');
+assertDeepEqual(splitTranscriptionOnAnd(undefined), [undefined], 'undefined returns array with undefined');
+assertDeepEqual(splitTranscriptionOnAnd('band together'), ['band together'], 'does not split on "and" within words');
+assertDeepEqual(splitTranscriptionOnAnd('candy and sandwiches'), ['candy', 'sandwiches'], 'splits even when surrounding words contain "and"');
+assertDeepEqual(splitTranscriptionOnAnd('a  and  b'), ['a', 'b'], 'handles multiple spaces around "and"');
+assertDeepEqual(splitTranscriptionOnAnd('first and second and third and fourth'), ['first', 'second', 'third', 'fourth'], 'splits four items');
+
+suite('Note card — text-only note (no audioBlob)');
+{
+  const note = {
+    id: 'text-only-1',
+    audioBlob: null,
+    duration: 0,
+    transcription: 'potatoes',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    listId: 'list-2',
+    completed: false
+  };
+  const list = { id: 'list-2', name: 'Groceries', mode: 'accomplish', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createNoteCard(note, list);
+  assert(card.classList.contains('note-card'), 'card has note-card class');
+  assertEqual(card.querySelector('.note-transcription').textContent, 'potatoes', 'shows transcription text');
+  assert(card.querySelector('.play-btn') === null, 'no play button for text-only note');
+  assert(card.querySelector('.note-meta') === null, 'no meta line for text-only note');
+  assert(card.querySelector('.note-progress') === null, 'no progress bar for text-only note');
+  assert(card.querySelector('.delete-btn') !== null, 'still has delete button');
+  assert(card.querySelector('.note-checkbox') !== null, 'still has checkbox in accomplish mode');
+  assert(card.querySelector('.drag-handle') !== null, 'still has drag handle in accomplish mode');
+}
+
+suite('Note card — note with audioBlob still shows controls');
+{
+  const note = {
+    id: 'audio-1',
+    audioBlob: { size: 100 },
+    duration: 30,
+    transcription: 'meat',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    listId: 'list-2',
+    completed: false
+  };
+  const list = { id: 'list-2', name: 'Groceries', mode: 'accomplish', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createNoteCard(note, list);
+  assert(card.querySelector('.play-btn') !== null, 'has play button for audio note');
+  assert(card.querySelector('.note-meta') !== null, 'has meta line for audio note');
+  assert(card.querySelector('.note-progress') !== null, 'has progress bar for audio note');
+}
+
+// ============================================================
 // Source file integrity
 // ============================================================
 
@@ -1083,7 +1157,7 @@ suite('Source file integrity');
   assert(appJs.includes('SpeechRecognition'), 'app.js references SpeechRecognition');
   assert(appJs.includes('startTranscription'), 'app.js defines startTranscription');
   assert(appJs.includes('stopTranscription'), 'app.js defines stopTranscription');
-  assert(appJs.includes('transcription: result.transcription'), 'note object includes transcription from result');
+  assert(appJs.includes('result.transcription'), 'note creation uses result.transcription');
   assert(appJs.includes('note-transcription'), 'app.js uses note-transcription class');
   assert(appJs.includes('note-transcription-empty'), 'app.js uses note-transcription-empty class');
   assert(appJs.includes("recognition.continuous = true"), 'recognition is set to continuous mode');
@@ -1134,6 +1208,8 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes('note-content'), 'app.js uses note-content class');
   assert(appJs.includes('list-card'), 'app.js uses list-card class');
   assert(appJs.includes("mode === 'accomplish'"), 'app.js checks accomplish mode');
+  assert(appJs.includes('splitTranscriptionOnAnd'), 'app.js defines splitTranscriptionOnAnd');
+  assert(appJs.includes('hasAudio'), 'app.js checks hasAudio for conditional rendering');
 
   const appCss = fs.readFileSync(__dirname + '/app.css', 'utf8');
   assert(appCss.includes('.list-card'), 'app.css defines .list-card');
@@ -1154,10 +1230,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v18'), 'index.html version is v18');
+  assert(indexHtml.includes('v19'), 'index.html version is v19');
 
   const swJs = fs.readFileSync(__dirname + '/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v18'), 'sw.js cache version is v18');
+  assert(swJs.includes('voice-notes-v19'), 'sw.js cache version is v19');
 }
 
 } // end runTests

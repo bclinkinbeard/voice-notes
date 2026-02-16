@@ -415,29 +415,29 @@ header {
 
 .note-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .note-actions button {
-  flex: 1;
-  min-height: 48px;
-  padding: 12px;
-  border-radius: 8px;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 6px;
   border: none;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   cursor: pointer;
   font-family: inherit;
 }
 
 .play-btn {
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-muted);
 }
 
 .delete-btn {
   background: transparent;
-  color: var(--accent);
+  color: var(--text-muted);
+  font-size: 0.7rem;
 }
 
 .play-btn:active,
@@ -457,14 +457,16 @@ header {
 }
 
 .drag-handle {
-  font-size: 1.5rem;
+  font-size: 2rem;
   color: var(--text-muted);
   cursor: grab;
   touch-action: none;
-  padding: 4px;
+  padding: 8px 6px;
   line-height: 1;
   user-select: none;
   -webkit-user-select: none;
+  min-width: 36px;
+  text-align: center;
 }
 
 .drag-handle:active {
@@ -473,11 +475,34 @@ header {
 }
 
 .note-checkbox {
-  width: 22px;
-  height: 22px;
-  accent-color: var(--accent);
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--text-muted);
+  border-radius: 6px;
+  background: transparent;
   cursor: pointer;
   flex-shrink: 0;
+  position: relative;
+  transition: all 0.15s;
+}
+
+.note-checkbox:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.note-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 4px;
+  width: 7px;
+  height: 13px;
+  border: solid var(--text);
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
 }
 
 .drag-placeholder {

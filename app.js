@@ -1,5 +1,7 @@
 'use strict';
 
+import { categorizeNote, analyzeSentiment, preloadSentimentModel } from './analysis.js';
+
 // --- Constants ---
 
 const DEFAULT_LIST_ID = 'default';
@@ -35,6 +37,7 @@ const modeSelector = document.getElementById('mode-selector');
 const modeDescription = document.getElementById('mode-description');
 const modalCancelBtn = document.getElementById('modal-cancel-btn');
 const modalSaveBtn = document.getElementById('modal-save-btn');
+const filterBar = document.getElementById('filter-bar');
 
 // --- State ---
 
@@ -56,6 +59,7 @@ let currentListId = null;
 let editingListId = null;
 let selectedMode = 'capture';
 let dragState = null;
+let activeFilter = 'all';
 
 // --- IndexedDB ---
 
@@ -601,6 +605,33 @@ function createNoteCard(note, list) {
   }
   content.appendChild(transcriptionEl);
 
+  // Analysis tags (categories + sentiment)
+  const hasCategories = note.categories && note.categories.length > 0;
+  const hasSentiment = note.sentiment && note.sentiment.label !== 'neutral';
+  if (hasCategories || hasSentiment) {
+    const tagsEl = document.createElement('div');
+    tagsEl.className = 'note-tags';
+
+    if (hasSentiment) {
+      const sentimentTag = document.createElement('span');
+      sentimentTag.className = 'note-tag note-tag-sentiment';
+      sentimentTag.dataset.sentiment = note.sentiment.label;
+      sentimentTag.textContent = note.sentiment.label;
+      tagsEl.appendChild(sentimentTag);
+    }
+
+    if (hasCategories) {
+      for (const cat of note.categories) {
+        const tag = document.createElement('span');
+        tag.className = 'note-tag';
+        tag.textContent = cat;
+        tagsEl.appendChild(tag);
+      }
+    }
+
+    content.appendChild(tagsEl);
+  }
+
   const hasAudio = !!note.audioBlob;
 
   // Meta line (duration · date)
@@ -804,6 +835,52 @@ async function renderLists() {
   }
 }
 
+function renderFilterBar(notes) {
+  const allCategories = new Set();
+  for (const note of notes) {
+    if (note.categories) {
+      for (const cat of note.categories) {
+        allCategories.add(cat);
+      }
+    }
+  }
+
+  while (filterBar.firstChild) {
+    filterBar.removeChild(filterBar.firstChild);
+  }
+
+  if (allCategories.size === 0) {
+    filterBar.classList.add('hidden');
+    return;
+  }
+
+  const allChip = document.createElement('button');
+  allChip.type = 'button';
+  allChip.className = 'filter-chip' + (activeFilter === 'all' ? ' active' : '');
+  allChip.textContent = 'All';
+  allChip.dataset.filter = 'all';
+  allChip.addEventListener('click', () => {
+    activeFilter = 'all';
+    renderListDetail(currentListId);
+  });
+  filterBar.appendChild(allChip);
+
+  for (const cat of allCategories) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'filter-chip' + (activeFilter === cat ? ' active' : '');
+    chip.textContent = cat;
+    chip.dataset.filter = cat;
+    chip.addEventListener('click', () => {
+      activeFilter = cat;
+      renderListDetail(currentListId);
+    });
+    filterBar.appendChild(chip);
+  }
+
+  filterBar.classList.remove('hidden');
+}
+
 async function renderListDetail(listId) {
   stopCurrentPlayback();
 
@@ -845,15 +922,24 @@ async function renderListDetail(listId) {
     notes.push(...incomplete, ...completed);
   }
 
+  // Render filter bar
+  renderFilterBar(notes);
+
+  // Apply category filter
+  let filteredNotes = notes;
+  if (activeFilter !== 'all') {
+    filteredNotes = notes.filter((n) => n.categories && n.categories.includes(activeFilter));
+  }
+
   while (listNotesEl.firstChild) {
     listNotesEl.removeChild(listNotesEl.firstChild);
   }
 
-  for (const note of notes) {
+  for (const note of filteredNotes) {
     listNotesEl.appendChild(createNoteCard(note, list));
   }
 
-  if (notes.length === 0) {
+  if (filteredNotes.length === 0) {
     listEmptyState.classList.remove('hidden');
   } else {
     listEmptyState.classList.add('hidden');
@@ -952,11 +1038,46 @@ async function onDragEnd() {
   }
 }
 
+// --- Background Analysis ---
+
+async function processUnanalyzedNotes(listId) {
+  const notes = await getNotesByList(listId);
+  const needsCategories = notes.filter((n) => n.transcription && !n.categories);
+  const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
+
+  // Instant: add categories to any notes missing them
+  let categorized = false;
+  for (const note of needsCategories) {
+    note.categories = categorizeNote(note.transcription);
+    await saveNote(note);
+    categorized = true;
+  }
+
+  if (categorized && currentListId === listId) {
+    await renderListDetail(listId);
+  }
+
+  // Background: run sentiment analysis on notes missing it
+  for (const note of needsSentiment) {
+    try {
+      const sentiment = await analyzeSentiment(note.transcription);
+      note.sentiment = sentiment;
+      await saveNote(note);
+      if (currentListId === listId) {
+        await renderListDetail(listId);
+      }
+    } catch (e) {
+      // Skip notes that fail
+    }
+  }
+}
+
 // --- View Navigation ---
 
 function showListsView() {
   stopCurrentPlayback();
   currentListId = null;
+  activeFilter = 'all';
   listsView.classList.remove('hidden');
   listDetailView.classList.add('hidden');
   backBtn.classList.add('hidden');
@@ -965,11 +1086,16 @@ function showListsView() {
 
 function showListDetailView(listId) {
   currentListId = listId;
+  activeFilter = 'all';
   listsView.classList.add('hidden');
   listDetailView.classList.remove('hidden');
   backBtn.classList.remove('hidden');
   recordHint.textContent = 'Tap to record';
   renderListDetail(listId);
+
+  // Preload sentiment model and process unanalyzed notes in background
+  preloadSentimentModel();
+  processUnanalyzedNotes(listId);
 }
 
 backBtn.addEventListener('click', showListsView);
@@ -1118,6 +1244,7 @@ recordBtn.addEventListener('click', async () => {
 
         if (!list.noteOrder) list.noteOrder = [];
 
+        const savedNotes = [];
         for (let i = 0; i < parts.length; i++) {
           const note = {
             id: crypto.randomUUID(),
@@ -1126,14 +1253,31 @@ recordBtn.addEventListener('click', async () => {
             transcription: parts[i] || '',
             createdAt: now,
             listId: currentListId,
-            completed: false
+            completed: false,
+            categories: categorizeNote(parts[i] || ''),
+            sentiment: null
           };
           await saveNote(note);
           list.noteOrder.push(note.id);
+          savedNotes.push(note);
         }
 
         await saveList(list);
         await renderListDetail(currentListId);
+
+        // Background sentiment analysis
+        const listIdAtSave = currentListId;
+        for (const note of savedNotes) {
+          if (note.transcription) {
+            analyzeSentiment(note.transcription).then(async (sentiment) => {
+              note.sentiment = sentiment;
+              await saveNote(note);
+              if (currentListId === listIdAtSave) {
+                await renderListDetail(listIdAtSave);
+              }
+            }).catch(() => {});
+          }
+        }
       } else if (result) {
         recordHint.textContent = 'Too short \u2014 hold longer';
       }

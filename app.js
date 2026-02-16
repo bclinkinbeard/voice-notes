@@ -503,18 +503,18 @@ async function stopRecording() {
   });
 
   recorder.stop();
-  const duration = Math.round((Date.now() - recordingStartTime) / 1000);
-  stopTimer();
-  stopWaveform();
 
   const [transcription, blob] = await Promise.all([
     stopTranscription(),
     blobPromise
   ]);
 
+  const duration = Math.round((Date.now() - recordingStartTime) / 1000);
   recorder.stream.getTracks().forEach((t) => t.stop());
   audioChunks = [];
   mediaRecorder = null;
+  stopTimer();
+  stopWaveform();
 
   return { blob, duration, transcription };
 }
@@ -1102,12 +1102,12 @@ recordBtn.addEventListener('click', async () => {
     recordBusy = true;
 
     if (isRecording) {
-      isRecording = false;
       recordBtn.classList.remove('recording');
       recorderEl.classList.remove('recording');
       recordHint.textContent = 'Tap to record';
 
       const result = await stopRecording();
+      isRecording = false;
 
       if (result && result.duration > 0) {
         const list = await getList(currentListId);

@@ -427,6 +427,14 @@ function stopTranscription() {
   });
 }
 
+// --- Transcription Splitting ---
+
+function splitTranscriptionOnAnd(text) {
+  if (!text) return [text];
+  const parts = text.split(/\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [text];
+}
+
 // --- Audio Recording ---
 
 async function startRecording() {
@@ -583,19 +591,26 @@ function createNoteCard(note, list) {
   }
   content.appendChild(transcriptionEl);
 
-  // Meta line (duration · date)
-  const meta = document.createElement('div');
-  meta.className = 'note-meta';
-  meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
-  content.appendChild(meta);
+  const hasAudio = !!note.audioBlob;
 
-  // Progress bar
-  const progress = document.createElement('div');
-  progress.className = 'note-progress';
-  const progressFill = document.createElement('div');
-  progressFill.className = 'note-progress-fill';
-  progress.appendChild(progressFill);
-  content.appendChild(progress);
+  // Meta line (duration · date)
+  if (hasAudio) {
+    const meta = document.createElement('div');
+    meta.className = 'note-meta';
+    meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
+    content.appendChild(meta);
+  }
+
+  // Progress bar (only for notes with audio)
+  let progressFill = null;
+  if (hasAudio) {
+    const progress = document.createElement('div');
+    progress.className = 'note-progress';
+    progressFill = document.createElement('div');
+    progressFill.className = 'note-progress-fill';
+    progress.appendChild(progressFill);
+    content.appendChild(progress);
+  }
 
   card.appendChild(content);
 
@@ -603,11 +618,15 @@ function createNoteCard(note, list) {
   const actions = document.createElement('div');
   actions.className = 'note-actions';
 
-  const playBtn = document.createElement('button');
-  playBtn.type = 'button';
-  playBtn.className = 'play-btn';
-  playBtn.textContent = '\u25B6';
-  playBtn.setAttribute('aria-label', 'Play');
+  let playBtn = null;
+  if (hasAudio) {
+    playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'play-btn';
+    playBtn.textContent = '\u25B6';
+    playBtn.setAttribute('aria-label', 'Play');
+    actions.appendChild(playBtn);
+  }
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
@@ -615,12 +634,11 @@ function createNoteCard(note, list) {
   deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
   deleteBtn.setAttribute('aria-label', 'Delete');
 
-  actions.appendChild(playBtn);
   actions.appendChild(deleteBtn);
   card.appendChild(actions);
 
   // Play button handler
-  playBtn.addEventListener('click', () => {
+  if (playBtn) playBtn.addEventListener('click', () => {
     if (currentAudio && currentPlayBtn === playBtn) {
       if (!currentAudio.paused) {
         currentAudio.pause();
@@ -676,7 +694,7 @@ function createNoteCard(note, list) {
   deleteBtn.addEventListener('click', async () => {
     if (!confirm('Delete this note?')) return;
 
-    if (currentPlayBtn === playBtn) {
+    if (playBtn && currentPlayBtn === playBtn) {
       stopCurrentPlayback();
     }
 
@@ -1082,25 +1100,29 @@ recordBtn.addEventListener('click', async () => {
       const result = await stopRecording();
 
       if (result && result.duration > 0) {
-        const note = {
-          id: crypto.randomUUID(),
-          audioBlob: result.blob,
-          duration: result.duration,
-          transcription: result.transcription || '',
-          createdAt: new Date().toISOString(),
-          listId: currentListId,
-          completed: false
-        };
-        await saveNote(note);
-
-        // Add to noteOrder for accomplish lists
         const list = await getList(currentListId);
-        if (list) {
-          if (!list.noteOrder) list.noteOrder = [];
+        const isAccomplish = list && list.mode === 'accomplish';
+        const transcription = result.transcription || '';
+        const parts = isAccomplish ? splitTranscriptionOnAnd(transcription) : [transcription];
+        const now = new Date().toISOString();
+
+        if (!list.noteOrder) list.noteOrder = [];
+
+        for (let i = 0; i < parts.length; i++) {
+          const note = {
+            id: crypto.randomUUID(),
+            audioBlob: i === 0 ? result.blob : null,
+            duration: i === 0 ? result.duration : 0,
+            transcription: parts[i] || '',
+            createdAt: now,
+            listId: currentListId,
+            completed: false
+          };
+          await saveNote(note);
           list.noteOrder.push(note.id);
-          await saveList(list);
         }
 
+        await saveList(list);
         await renderListDetail(currentListId);
       } else if (result) {
         recordHint.textContent = 'Too short \u2014 hold longer';

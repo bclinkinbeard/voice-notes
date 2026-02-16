@@ -1041,34 +1041,40 @@ async function onDragEnd() {
 // --- Background Analysis ---
 
 async function processUnanalyzedNotes(listId) {
-  const notes = await getNotesByList(listId);
-  const needsCategories = notes.filter((n) => n.transcription && !n.categories);
-  const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
+  try {
+    const notes = await getNotesByList(listId);
+    const needsCategories = notes.filter((n) => n.transcription && !n.categories);
+    const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
 
-  // Instant: add categories to any notes missing them
-  let categorized = false;
-  for (const note of needsCategories) {
-    note.categories = categorizeNote(note.transcription);
-    await saveNote(note);
-    categorized = true;
-  }
-
-  if (categorized && currentListId === listId) {
-    await renderListDetail(listId);
-  }
-
-  // Background: run sentiment analysis on notes missing it
-  for (const note of needsSentiment) {
-    try {
-      const sentiment = await analyzeSentiment(note.transcription);
-      note.sentiment = sentiment;
+    // Instant: add categories to any notes missing them
+    let categorized = false;
+    for (const note of needsCategories) {
+      note.categories = categorizeNote(note.transcription);
       await saveNote(note);
-      if (currentListId === listId) {
-        await renderListDetail(listId);
-      }
-    } catch (e) {
-      // Skip notes that fail
+      categorized = true;
     }
+
+    if (categorized && currentListId === listId && !isRecording) {
+      await renderListDetail(listId);
+    }
+
+    // Background: run sentiment analysis on notes missing it
+    // Skip if user is recording — avoid memory pressure from model loading
+    for (const note of needsSentiment) {
+      if (isRecording) break;
+      try {
+        const sentiment = await analyzeSentiment(note.transcription);
+        note.sentiment = sentiment;
+        await saveNote(note);
+        if (currentListId === listId && !isRecording) {
+          await renderListDetail(listId);
+        }
+      } catch (e) {
+        // Skip notes that fail
+      }
+    }
+  } catch (e) {
+    console.error('processUnanalyzedNotes error:', e);
   }
 }
 
@@ -1093,8 +1099,9 @@ function showListDetailView(listId) {
   recordHint.textContent = 'Tap to record';
   renderListDetail(listId);
 
-  // Preload sentiment model and process unanalyzed notes in background
-  preloadSentimentModel();
+  // Run lightweight keyword categorization on existing notes in background.
+  // Sentiment model loading is deferred until after first recording to avoid
+  // memory pressure while the user might be about to record.
   processUnanalyzedNotes(listId);
 }
 
@@ -1265,19 +1272,26 @@ recordBtn.addEventListener('click', async () => {
         await saveList(list);
         await renderListDetail(currentListId);
 
-        // Background sentiment analysis
+        // Background sentiment analysis — runs after recording finishes
+        // so model loading doesn't compete with MediaRecorder for memory.
         const listIdAtSave = currentListId;
-        for (const note of savedNotes) {
-          if (note.transcription) {
-            analyzeSentiment(note.transcription).then(async (sentiment) => {
+        (async () => {
+          for (const note of savedNotes) {
+            if (!note.transcription) continue;
+            try {
+              const sentiment = await analyzeSentiment(note.transcription);
               note.sentiment = sentiment;
               await saveNote(note);
-              if (currentListId === listIdAtSave) {
+              if (currentListId === listIdAtSave && !isRecording) {
                 await renderListDetail(listIdAtSave);
               }
-            }).catch(() => {});
+            } catch (e) {
+              // Sentiment analysis failed — note still saved without it
+            }
           }
-        }
+          // Also process any other unanalyzed notes now that recording is done
+          processUnanalyzedNotes(listIdAtSave);
+        })();
       } else if (result) {
         recordHint.textContent = 'Too short \u2014 hold longer';
       }

@@ -38,6 +38,7 @@ const modeDescription = document.getElementById('mode-description');
 const modalCancelBtn = document.getElementById('modal-cancel-btn');
 const modalSaveBtn = document.getElementById('modal-save-btn');
 const filterBar = document.getElementById('filter-bar');
+const themePicker = document.getElementById('theme-picker');
 
 // --- State ---
 
@@ -302,13 +303,15 @@ function startWaveform(stream) {
   waveformCanvas.height = H * dpr;
   ctx.scale(dpr, dpr);
 
-  const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const computedStyle = getComputedStyle(document.documentElement);
+  const accentColor = computedStyle.getPropertyValue('--accent').trim();
+  const waveformFillColor = computedStyle.getPropertyValue('--waveform-fill').trim() || 'rgba(26, 26, 46, 0.3)';
 
   function draw() {
     waveformFrameId = requestAnimationFrame(draw);
     analyser.getByteTimeDomainData(dataArray);
 
-    ctx.fillStyle = 'rgba(26, 26, 46, 0.3)';
+    ctx.fillStyle = waveformFillColor;
     ctx.fillRect(0, 0, W, H);
 
     ctx.lineWidth = 2;
@@ -1336,6 +1339,41 @@ recordBtn.addEventListener('click', async () => {
     recordBusy = false;
   }
 });
+
+// --- Theme ---
+
+const THEME_META_COLORS = {
+  '': '#1a1a2e',
+  aurora: '#1c1017',
+  frost: '#f4f5f7',
+  neon: '#0a0a0f'
+};
+
+function applyTheme(theme) {
+  if (theme) {
+    document.documentElement.dataset.theme = theme;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = THEME_META_COLORS[theme] || THEME_META_COLORS[''];
+  if (themePicker) {
+    themePicker.querySelectorAll('.theme-swatch').forEach((btn) => {
+      btn.classList.toggle('active', (btn.dataset.themeValue || '') === (theme || ''));
+    });
+  }
+  localStorage.setItem('voice-notes-theme', theme || '');
+}
+
+if (themePicker) {
+  themePicker.addEventListener('click', (e) => {
+    const btn = e.target.closest('.theme-swatch');
+    if (!btn) return;
+    applyTheme(btn.dataset.themeValue || '');
+  });
+}
+
+applyTheme(localStorage.getItem('voice-notes-theme') || '');
 
 // --- Service Worker Registration ---
 

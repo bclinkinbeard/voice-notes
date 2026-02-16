@@ -1416,6 +1416,14 @@ suite('Source file integrity');
   assert(indexHtml.includes('how-to-use'), 'index.html has how-to-use element');
 
   assert(appCss.includes('#how-to-use'), 'app.css defines #how-to-use');
+  assert(appCss.includes('[data-theme="aurora"]'), 'app.css defines aurora theme');
+  assert(appCss.includes('[data-theme="frost"]'), 'app.css defines frost theme');
+  assert(appCss.includes('[data-theme="neon"]'), 'app.css defines neon theme');
+  assert(appCss.includes('.theme-swatch'), 'app.css defines .theme-swatch');
+  assert(appCss.includes('#theme-picker'), 'app.css defines #theme-picker');
+  assert(indexHtml.includes('theme-picker'), 'index.html has theme-picker');
+  assert(appJs.includes('applyTheme'), 'app.js defines applyTheme');
+  assert(appJs.includes('voice-notes-theme'), 'app.js uses localStorage key for theme');
 }
 
 suite('Source file integrity — lists feature');
@@ -1476,10 +1484,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v22'), 'index.html version is v22');
+  assert(indexHtml.includes('v23'), 'index.html version is v23');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v22'), 'sw.js cache version is v22');
+  assert(swJs.includes('voice-notes-v23'), 'sw.js cache version is v23');
 }
 
 } // end runTests

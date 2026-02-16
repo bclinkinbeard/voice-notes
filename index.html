@@ -13,24 +13,66 @@
 </head>
 <body>
   <header>
-    <h1>Voice Notes</h1>
-    <p id="app-version">v14</p>
+    <div id="header-bar">
+      <button id="back-btn" class="hidden" type="button" aria-label="Back">&#8592;</button>
+      <h1>Voice Notes</h1>
+    </div>
+    <p id="app-version">v18</p>
   </header>
 
-  <main id="recorder">
-    <div id="timer">0:00</div>
-    <canvas id="waveform" width="280" height="64"></canvas>
-    <button id="record-btn" type="button" aria-label="Record">
-      <span id="record-icon"></span>
-    </button>
-    <p id="record-hint">Tap to record</p>
-  </main>
-
-  <section id="notes">
-    <h2>Saved Notes</h2>
-    <div id="notes-list"></div>
-    <p id="empty-state">No voice notes yet. Tap the button above to record one.</p>
+  <!-- Lists View -->
+  <section id="lists-view">
+    <div id="lists-header">
+      <h2>Your Lists</h2>
+      <button id="new-list-btn" type="button">+ New List</button>
+    </div>
+    <div id="lists-container"></div>
+    <p id="lists-empty-state" class="hidden">No lists yet. Create one to start recording.</p>
   </section>
+
+  <!-- List Detail View -->
+  <section id="list-detail-view" class="hidden">
+    <div id="list-detail-header">
+      <div id="list-detail-info">
+        <h2 id="list-detail-name"></h2>
+        <span id="list-detail-mode"></span>
+      </div>
+      <div id="list-detail-actions">
+        <button id="rename-list-btn" type="button">Rename</button>
+        <button id="delete-list-btn" type="button">Delete</button>
+      </div>
+    </div>
+
+    <main id="recorder">
+      <div id="timer">0:00</div>
+      <canvas id="waveform" width="280" height="64"></canvas>
+      <button id="record-btn" type="button" aria-label="Record">
+        <span id="record-icon"></span>
+      </button>
+      <p id="record-hint">Tap to record</p>
+    </main>
+
+    <div id="list-notes"></div>
+    <p id="list-empty-state" class="hidden">No notes yet. Tap to record one.</p>
+  </section>
+
+  <!-- Create/Edit List Modal -->
+  <div id="list-modal" class="hidden">
+    <div id="list-modal-backdrop"></div>
+    <div id="list-modal-content">
+      <h2 id="list-modal-title">New List</h2>
+      <input id="list-name-input" type="text" placeholder="List name" maxlength="50" autocomplete="off">
+      <div id="mode-selector">
+        <button type="button" data-mode="capture" class="mode-btn active">Capture</button>
+        <button type="button" data-mode="accomplish" class="mode-btn">Accomplish</button>
+      </div>
+      <p id="mode-description">Record and save voice notes.</p>
+      <div id="list-modal-actions">
+        <button id="modal-cancel-btn" type="button">Cancel</button>
+        <button id="modal-save-btn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

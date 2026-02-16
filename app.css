@@ -44,11 +44,225 @@ header {
   padding: 20px 0 8px;
 }
 
+#header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+#back-btn {
+  position: absolute;
+  left: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 4px 12px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+
+#back-btn:active {
+  opacity: 0.7;
+}
+
 #app-version {
   font-size: 0.7rem;
   color: var(--text-muted);
   opacity: 0.5;
   margin-top: 2px;
+}
+
+/* ========================================
+   Lists View
+   ======================================== */
+
+#lists-view {
+  padding-top: 16px;
+}
+
+#lists-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+#lists-header h2 {
+  font-size: 1rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#new-list-btn {
+  background: var(--accent);
+  color: var(--text);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  font-family: inherit;
+  min-height: 48px;
+}
+
+#new-list-btn:active {
+  opacity: 0.8;
+}
+
+#lists-empty-state {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px 20px;
+  font-size: 0.9rem;
+}
+
+/* ========================================
+   List Cards
+   ======================================== */
+
+.list-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.list-card:active {
+  background: var(--surface-2);
+}
+
+.list-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-card-name {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-mode-badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.list-mode-badge[data-mode="accomplish"] {
+  background: rgba(233, 69, 96, 0.15);
+  color: var(--accent);
+}
+
+.list-card-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.list-card-arrow {
+  font-size: 1.5rem;
+  color: var(--text-muted);
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+
+/* ========================================
+   List Detail View
+   ======================================== */
+
+#list-detail-view {
+  padding-top: 8px;
+}
+
+#list-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+#list-detail-info {
+  flex: 1;
+  min-width: 0;
+}
+
+#list-detail-name {
+  font-size: 1.25rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#list-detail-mode {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  display: inline-block;
+  margin-top: 4px;
+}
+
+#list-detail-mode[data-mode="accomplish"] {
+  background: rgba(233, 69, 96, 0.15);
+  color: var(--accent);
+}
+
+#list-detail-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+#list-detail-actions button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 8px;
+  min-height: 48px;
+  font-family: inherit;
+}
+
+#list-detail-actions button:active {
+  color: var(--text);
+}
+
+#delete-list-btn {
+  color: var(--accent) !important;
+}
+
+#list-empty-state {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px 20px;
+  font-size: 0.9rem;
 }
 
 /* ========================================
@@ -129,55 +343,45 @@ header {
 }
 
 /* ========================================
-   Notes Section
-   ======================================== */
-
-#notes {
-  padding-top: 16px;
-}
-
-#notes h2 {
-  font-size: 1rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 12px;
-}
-
-/* ========================================
    Note Cards
    ======================================== */
 
 .note-card {
   background: var(--surface);
   border-radius: var(--radius);
-  padding: 16px;
+  padding: 12px;
   margin-bottom: 10px;
-}
-
-.note-header {
+  transition: opacity 0.2s;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
 }
 
-.note-date {
-  font-size: 0.875rem;
+.note-card.completed {
+  opacity: 0.5;
 }
 
-.note-duration {
-  font-size: 0.75rem;
+.note-card.dragging {
+  opacity: 0.85;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.note-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-meta {
+  font-size: 0.65rem;
   color: var(--text-muted);
-  background: var(--surface-2);
-  padding: 2px 8px;
-  border-radius: 999px;
+  margin-top: 4px;
 }
 
 .note-progress {
   height: 3px;
   background: var(--surface-2);
   border-radius: 3px;
-  margin: 12px 0;
+  margin-top: 8px;
   overflow: hidden;
 }
 
@@ -192,7 +396,12 @@ header {
   font-size: 0.875rem;
   line-height: 1.4;
   color: var(--text);
-  margin: 8px 0;
+  margin: 0;
+}
+
+.note-card.completed .note-transcription {
+  text-decoration: line-through;
+  color: var(--text-muted);
 }
 
 .note-transcription-empty {
@@ -202,11 +411,190 @@ header {
 
 .note-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .note-actions button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+}
+
+.play-btn {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.delete-btn {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+}
+
+.play-btn:active,
+.delete-btn:active {
+  opacity: 0.7;
+}
+
+/* ========================================
+   Accomplish Mode
+   ======================================== */
+
+.drag-handle {
+  font-size: 2.5rem;
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+  padding: 8px;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  min-width: 48px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+  color: var(--text);
+}
+
+.note-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--text-muted);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+  transition: all 0.15s;
+}
+
+.note-checkbox:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.note-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 4px;
+  width: 7px;
+  height: 13px;
+  border: solid var(--text);
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
+}
+
+.drag-placeholder {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  opacity: 0.3;
+}
+
+/* ========================================
+   List Modal
+   ======================================== */
+
+#list-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+#list-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+#list-modal-content {
+  position: relative;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 90%;
+  max-width: 360px;
+}
+
+#list-modal-content h2 {
+  font-size: 1.1rem;
+  margin-bottom: 16px;
+}
+
+#list-name-input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--surface-2);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+  font-family: inherit;
+  outline: none;
+  margin-bottom: 12px;
+}
+
+#list-name-input:focus {
+  border-color: var(--accent);
+}
+
+#mode-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--surface-2);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+  font-family: inherit;
+  min-height: 48px;
+  transition: all 0.15s;
+}
+
+.mode-btn.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(233, 69, 96, 0.1);
+}
+
+#mode-description {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+#list-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#list-modal-actions button {
   flex: 1;
   min-height: 48px;
   padding: 12px;
@@ -217,30 +605,19 @@ header {
   font-family: inherit;
 }
 
-.play-btn {
+#modal-cancel-btn {
   background: var(--surface-2);
   color: var(--text);
 }
 
-.delete-btn {
-  background: transparent;
-  color: var(--accent);
+#modal-save-btn {
+  background: var(--accent);
+  color: var(--text);
 }
 
-.play-btn:active,
-.delete-btn:active {
-  opacity: 0.7;
-}
-
-/* ========================================
-   Empty State
-   ======================================== */
-
-#empty-state {
-  color: var(--text-muted);
-  text-align: center;
-  padding: 40px 20px;
-  font-size: 0.9rem;
+#modal-cancel-btn:active,
+#modal-save-btn:active {
+  opacity: 0.8;
 }
 
 /* ========================================

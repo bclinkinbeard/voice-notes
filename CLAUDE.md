@@ -6,7 +6,7 @@ A minimal, offline-first PWA for capturing voice notes on mobile. Record thought
 
 - **Run tests:** `node tests.js`
 - **Deploy:** Copy all files to any static file server (no build step)
-- **Current version:** v14 (tracked in both `index.html` `#app-version` and `sw.js` `CACHE_NAME`)
+- **Current version:** v18 (tracked in `index.html` `#app-version`, `sw.js` `CACHE_NAME`, and `tests.js` version assertions)
 
 ## Project Goals
 
@@ -108,16 +108,19 @@ The test file (`tests.js`) uses a custom lightweight harness with `suite()`, `as
 
 Strategy: **cache-first with network fallback**.
 
-- `CACHE_NAME` in `sw.js` is versioned (currently `voice-notes-v14`)
+- `CACHE_NAME` in `sw.js` is versioned (currently `voice-notes-v18`)
 - App shell assets are pre-cached on install: `./`, `app.css`, `app.js`, `manifest.json`, icons
 - Old caches are automatically cleaned up on activation
 - Audio blobs are NOT cached by the service worker (stored in IndexedDB)
 
 ### Version Bumping
 
-When changing any cached asset, bump the version in **both** places:
+**IMPORTANT:** When changing **any** cached asset (`index.html`, `app.css`, `app.js`, `manifest.json`, or icons), you **must** bump the version in **all three** places in the same commit:
 1. `sw.js` — `CACHE_NAME = 'voice-notes-vN'`
 2. `index.html` — `<p id="app-version">vN</p>`
+3. `tests.js` — version assertions in the "Source file integrity" suite
+
+Without this, the service worker will serve stale cached files and users won't see changes.
 
 ## Performance Budget
 

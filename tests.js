@@ -1,8 +1,13 @@
-'use strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ============================================================
 // Voice Notes — Test Suite
-// Runs in Node.js with minimal DOM mocking. Zero dependencies.
+// Runs in Node.js with minimal DOM mocking.
 // ============================================================
 
 let totalTests = 0;
@@ -119,6 +124,33 @@ function splitTranscriptionOnAnd(text) {
   return parts.length > 0 ? parts : [text];
 }
 
+// Replicate categorizeNote from analysis.js
+const CATEGORY_KEYWORDS = {
+  todo: ['need to', 'have to', 'should', 'must', 'remember to', 'got to', 'gotta', 'task', 'to do', 'to-do', 'make sure'],
+  idea: ['what if', 'idea', 'maybe we', 'could try', 'how about', 'brainstorm', 'concept', 'imagine', 'we could', 'possibility'],
+  question: ['how do', 'what is', 'why does', 'when will', 'where can', 'who is', 'i wonder', 'figure out', 'not sure', 'how come'],
+  reminder: ['tomorrow', 'next week', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'appointment', 'pick up', "don't forget", 'schedule'],
+  work: ['meeting', 'project', 'client', 'email', 'deadline', 'presentation', 'report', 'office', 'team', 'manager', 'colleague', 'boss', 'coworker'],
+  personal: ['family', 'friend', 'birthday', 'vacation', 'dinner', 'weekend', 'kids', 'wife', 'husband', 'parents', 'mom', 'dad'],
+  health: ['doctor', 'exercise', 'workout', 'sleep', 'headache', 'medication', 'medicine', 'symptom', 'diet', 'gym', 'pharmacy'],
+  finance: ['payment', 'budget', 'invoice', 'expense', 'price', 'cost', 'money', 'bill', 'bank', 'credit', 'debt', 'salary', 'rent']
+};
+
+function categorizeNote(text) {
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  const matched = [];
+  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (lower.includes(kw)) {
+        matched.push(category);
+        break;
+      }
+    }
+  }
+  return matched;
+}
+
 // Minimal DOM element mock
 function createElement(tag) {
   const classes = new Set();
@@ -224,6 +256,33 @@ function createNoteCard(note, list) {
     transcriptionEl.classList.add('note-transcription-empty');
   }
   content.appendChild(transcriptionEl);
+
+  // Analysis tags (categories + sentiment)
+  const hasCategories = note.categories && note.categories.length > 0;
+  const hasSentiment = note.sentiment && note.sentiment.label !== 'neutral';
+  if (hasCategories || hasSentiment) {
+    const tagsEl = createElement('div');
+    tagsEl.className = 'note-tags';
+
+    if (hasSentiment) {
+      const sentimentTag = createElement('span');
+      sentimentTag.className = 'note-tag note-tag-sentiment';
+      sentimentTag.dataset.sentiment = note.sentiment.label;
+      sentimentTag.textContent = note.sentiment.label;
+      tagsEl.appendChild(sentimentTag);
+    }
+
+    if (hasCategories) {
+      for (const cat of note.categories) {
+        const tag = createElement('span');
+        tag.className = 'note-tag';
+        tag.textContent = cat;
+        tagsEl.appendChild(tag);
+      }
+    }
+
+    content.appendChild(tagsEl);
+  }
 
   const hasAudio = !!note.audioBlob;
 
@@ -685,7 +744,9 @@ suite('Note schema contract');
     transcription: 'test',
     createdAt: '2026-02-15T14:30:00.000Z',
     listId: 'default',
-    completed: false
+    completed: false,
+    categories: ['work', 'todo'],
+    sentiment: { label: 'positive', score: 0.95 }
   };
   assertEqual(typeof note.id, 'string', 'id is string');
   assertEqual(typeof note.duration, 'number', 'duration is number');
@@ -694,6 +755,9 @@ suite('Note schema contract');
   assert('audioBlob' in note, 'audioBlob field exists');
   assertEqual(typeof note.listId, 'string', 'listId is string');
   assertEqual(typeof note.completed, 'boolean', 'completed is boolean');
+  assert(Array.isArray(note.categories), 'categories is array');
+  assertEqual(typeof note.sentiment.label, 'string', 'sentiment.label is string');
+  assertEqual(typeof note.sentiment.score, 'number', 'sentiment.score is number');
 }
 
 suite('List schema contract');
@@ -1167,13 +1231,132 @@ suite('Note card — note with audioBlob still shows controls');
 }
 
 // ============================================================
+// categorizeNote tests
+// ============================================================
+
+suite('categorizeNote — empty and null input');
+assertDeepEqual(categorizeNote(''), [], 'empty string returns empty array');
+assertDeepEqual(categorizeNote(null), [], 'null returns empty array');
+assertDeepEqual(categorizeNote(undefined), [], 'undefined returns empty array');
+
+suite('categorizeNote — single category matches');
+{
+  const result1 = categorizeNote('I need to buy groceries');
+  assert(result1.includes('todo'), 'matches todo for "need to"');
+
+  const result2 = categorizeNote('What if we built a spaceship?');
+  assert(result2.includes('idea'), 'matches idea for "what if"');
+
+  const result3 = categorizeNote('How do I fix this?');
+  assert(result3.includes('question'), 'matches question for "how do"');
+
+  const result4 = categorizeNote('Pick up the package tomorrow');
+  assert(result4.includes('reminder'), 'matches reminder for "tomorrow"');
+
+  const result5 = categorizeNote('The meeting with the client went well');
+  assert(result5.includes('work'), 'matches work for "meeting" and "client"');
+
+  const result6 = categorizeNote('Having dinner with family on the weekend');
+  assert(result6.includes('personal'), 'matches personal for "family"');
+
+  const result7 = categorizeNote('Need to schedule a doctor appointment');
+  assert(result7.includes('health'), 'matches health for "doctor"');
+
+  const result8 = categorizeNote('Pay the rent and check the bank balance');
+  assert(result8.includes('finance'), 'matches finance for "rent" and "bank"');
+}
+
+suite('categorizeNote — multiple category matches');
+{
+  const result = categorizeNote('I need to schedule a doctor appointment tomorrow');
+  assert(result.includes('todo'), 'multi: matches todo');
+  assert(result.includes('health'), 'multi: matches health');
+  assert(result.includes('reminder'), 'multi: matches reminder');
+}
+
+suite('categorizeNote — case insensitive');
+{
+  const result = categorizeNote('I NEED TO go to the GYM');
+  assert(result.includes('todo'), 'case insensitive: matches todo');
+  assert(result.includes('health'), 'case insensitive: matches health');
+}
+
+suite('categorizeNote — no match');
+{
+  const result = categorizeNote('The sky is blue');
+  assertEqual(result.length, 0, 'unrelated text returns empty array');
+}
+
+suite('Note card — with categories and sentiment');
+{
+  const note = {
+    id: 'test-analysis',
+    duration: 30,
+    transcription: 'Meeting with the team tomorrow',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    categories: ['work', 'reminder'],
+    sentiment: { label: 'positive', score: 0.92 }
+  };
+  const card = createNoteCard(note);
+  const tags = card.querySelectorAll('.note-tag');
+  assert(tags.length === 3, 'card has 3 tags (1 sentiment + 2 categories)');
+
+  const sentimentTag = card.querySelector('.note-tag-sentiment');
+  assert(sentimentTag !== null, 'has sentiment tag');
+  assertEqual(sentimentTag.textContent, 'positive', 'sentiment tag shows label');
+  assertEqual(sentimentTag.dataset.sentiment, 'positive', 'sentiment data attribute set');
+}
+
+suite('Note card — no tags when no analysis');
+{
+  const note = {
+    id: 'test-no-analysis',
+    duration: 10,
+    transcription: 'hello',
+    createdAt: '2026-02-15T14:30:00.000Z'
+  };
+  const card = createNoteCard(note);
+  assert(card.querySelector('.note-tags') === null, 'no tags container when no analysis');
+}
+
+suite('Note card — categories only (no sentiment)');
+{
+  const note = {
+    id: 'test-cats-only',
+    duration: 10,
+    transcription: 'hello',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    categories: ['todo'],
+    sentiment: null
+  };
+  const card = createNoteCard(note);
+  const tags = card.querySelectorAll('.note-tag');
+  assertEqual(tags.length, 1, 'one category tag');
+  assertEqual(tags[0].textContent, 'todo', 'tag shows category name');
+  assert(card.querySelector('.note-tag-sentiment') === null, 'no sentiment tag');
+}
+
+suite('Note card — neutral sentiment not shown');
+{
+  const note = {
+    id: 'test-neutral',
+    duration: 10,
+    transcription: 'hello',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    categories: [],
+    sentiment: { label: 'neutral', score: 0.5 }
+  };
+  const card = createNoteCard(note);
+  assert(card.querySelector('.note-tags') === null, 'no tags for neutral sentiment with no categories');
+}
+
+// ============================================================
 // Source file integrity
 // ============================================================
 
 suite('Source file integrity');
 {
-  const fs = require('fs');
-  const appJs = fs.readFileSync(__dirname + '/app.js', 'utf8');
+  const appJs = readFileSync(__dirname + '/app.js', 'utf8');
 
   assert(appJs.includes('formatTranscriptionSegment'), 'app.js defines formatTranscriptionSegment');
   assert(appJs.includes('SpeechRecognition'), 'app.js references SpeechRecognition');
@@ -1189,23 +1372,36 @@ suite('Source file integrity');
   assert(appJs.includes('recognition.onend'), 'stopTranscription waits for onend event');
   assert(appJs.includes('recognition.onerror = done'), 'stopTranscription handles onerror fallback');
   assert(appJs.includes('Promise'), 'stopTranscription returns a Promise');
-  assert(!appJs.includes('import '), 'no ES module imports (stays vanilla)');
-  assert(!appJs.includes('require('), 'no CommonJS requires (stays vanilla)');
+  assert(appJs.includes("import { categorizeNote"), 'app.js imports categorizeNote from analysis.js');
+  assert(!appJs.includes('require('), 'no CommonJS requires');
   assert(appJs.includes("'use strict'"), 'uses strict mode');
 
-  const appCss = fs.readFileSync(__dirname + '/app.css', 'utf8');
+  const analysisJs = readFileSync(__dirname + '/analysis.js', 'utf8');
+  assert(analysisJs.includes('CATEGORY_KEYWORDS'), 'analysis.js defines CATEGORY_KEYWORDS');
+  assert(analysisJs.includes('categorizeNote'), 'analysis.js exports categorizeNote');
+  assert(analysisJs.includes('analyzeSentiment'), 'analysis.js exports analyzeSentiment');
+  assert(analysisJs.includes('analyzeNote'), 'analysis.js exports analyzeNote');
+  assert(analysisJs.includes('@huggingface/transformers'), 'analysis.js imports transformers.js');
+
+  const appCss = readFileSync(__dirname + '/app.css', 'utf8');
   assert(appCss.includes('.note-transcription'), 'app.css defines .note-transcription');
   assert(appCss.includes('.note-transcription-empty'), 'app.css defines .note-transcription-empty');
+  assert(appCss.includes('.note-tags'), 'app.css defines .note-tags');
+  assert(appCss.includes('.note-tag'), 'app.css defines .note-tag');
+  assert(appCss.includes('.note-tag-sentiment'), 'app.css defines .note-tag-sentiment');
+  assert(appCss.includes('.filter-chip'), 'app.css defines .filter-chip');
+  assert(appCss.includes('#filter-bar'), 'app.css defines #filter-bar');
 
-  const indexHtml = fs.readFileSync(__dirname + '/index.html', 'utf8');
+  const indexHtml = readFileSync(__dirname + '/index.html', 'utf8');
   assert(indexHtml.includes('app.js'), 'index.html loads app.js');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
+  assert(indexHtml.includes('type="module"'), 'index.html uses type="module" for app.js');
+  assert(indexHtml.includes('filter-bar'), 'index.html has filter-bar element');
 }
 
 suite('Source file integrity — lists feature');
 {
-  const fs = require('fs');
-  const appJs = fs.readFileSync(__dirname + '/app.js', 'utf8');
+  const appJs = readFileSync(__dirname + '/app.js', 'utf8');
 
   assert(appJs.includes('saveList'), 'app.js defines saveList');
   assert(appJs.includes('getAllLists'), 'app.js defines getAllLists');
@@ -1232,8 +1428,16 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes("mode === 'accomplish'"), 'app.js checks accomplish mode');
   assert(appJs.includes('splitTranscriptionOnAnd'), 'app.js defines splitTranscriptionOnAnd');
   assert(appJs.includes('hasAudio'), 'app.js checks hasAudio for conditional rendering');
+  assert(appJs.includes('categorizeNote'), 'app.js uses categorizeNote');
+  assert(appJs.includes('analyzeSentiment'), 'app.js uses analyzeSentiment');
+  assert(appJs.includes('processUnanalyzedNotes'), 'app.js defines processUnanalyzedNotes');
+  assert(appJs.includes('renderFilterBar'), 'app.js defines renderFilterBar');
+  assert(appJs.includes('activeFilter'), 'app.js tracks activeFilter state');
+  assert(appJs.includes('note-tags'), 'app.js uses note-tags class');
+  assert(appJs.includes('note-tag'), 'app.js uses note-tag class');
+  assert(appJs.includes('filter-chip'), 'app.js uses filter-chip class');
 
-  const appCss = fs.readFileSync(__dirname + '/app.css', 'utf8');
+  const appCss = readFileSync(__dirname + '/app.css', 'utf8');
   assert(appCss.includes('.list-card'), 'app.css defines .list-card');
   assert(appCss.includes('.list-mode-badge'), 'app.css defines .list-mode-badge');
   assert(appCss.includes('.note-checkbox'), 'app.css defines .note-checkbox');
@@ -1245,7 +1449,7 @@ suite('Source file integrity — lists feature');
   assert(appCss.includes('.mode-btn'), 'app.css defines .mode-btn');
   assert(appCss.includes('#back-btn'), 'app.css defines #back-btn');
 
-  const indexHtml = fs.readFileSync(__dirname + '/index.html', 'utf8');
+  const indexHtml = readFileSync(__dirname + '/index.html', 'utf8');
   assert(indexHtml.includes('lists-view'), 'index.html has lists-view');
   assert(indexHtml.includes('list-detail-view'), 'index.html has list-detail-view');
   assert(indexHtml.includes('list-modal'), 'index.html has list-modal');
@@ -1254,7 +1458,7 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
   assert(indexHtml.includes('v20'), 'index.html version is v20');
 
-  const swJs = fs.readFileSync(__dirname + '/sw.js', 'utf8');
+  const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
   assert(swJs.includes('voice-notes-v20'), 'sw.js cache version is v20');
 }
 

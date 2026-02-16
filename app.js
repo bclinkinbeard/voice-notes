@@ -282,7 +282,9 @@ function stopTimer() {
 function startWaveform(stream) {
   if (!waveformCtx) return;
 
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioContext || audioContext.state === 'closed') {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 2048;
 
@@ -343,11 +345,7 @@ function stopWaveform() {
     cancelAnimationFrame(waveformFrameId);
     waveformFrameId = null;
   }
-  if (audioContext) {
-    audioContext.close().catch(() => {});
-    audioContext = null;
-    analyser = null;
-  }
+  analyser = null;
   if (waveformCtx) {
     waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
   }
@@ -382,8 +380,7 @@ function startTranscription() {
         if (e.results[i].isFinal) {
           const text = e.results[i][0].transcript.trim();
           if (text) {
-            const formatted = formatTranscriptionSegment(text);
-            transcriptionResult += (transcriptionResult ? ' ' : '') + formatted;
+            transcriptionResult += (transcriptionResult ? ' ' : '') + text;
           }
         }
       }
@@ -486,6 +483,17 @@ async function startRecording() {
     }
   };
 
+  mediaRecorder.onerror = () => {
+    isRecording = false;
+    recordBtn.classList.remove('recording');
+    recorderEl.classList.remove('recording');
+    recordHint.textContent = 'Recording error — try again';
+    mediaRecorder = null;
+    stopTimer();
+    stopWaveform();
+    stopTranscription();
+  };
+
   mediaRecorder.start(100);
   recordingStartTime = Date.now();
   startTimer();
@@ -495,6 +503,9 @@ async function startRecording() {
 
 async function stopRecording() {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+    stopTimer();
+    stopWaveform();
+    mediaRecorder = null;
     return null;
   }
 
@@ -1245,7 +1256,8 @@ recordBtn.addEventListener('click', async () => {
       if (result && result.duration > 0) {
         const list = await getList(currentListId);
         const isAccomplish = list && list.mode === 'accomplish';
-        const transcription = result.transcription || '';
+        const rawTranscription = result.transcription || '';
+        const transcription = isAccomplish ? rawTranscription : formatTranscriptionSegment(rawTranscription) || '';
         const parts = isAccomplish ? splitTranscriptionOnAnd(transcription) : [transcription];
         const now = new Date().toISOString();
 

@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Notes — Aurora Theme</title>
+  <style>
+    :root {
+      --bg: #1c1017;
+      --surface: #2a1a22;
+      --surface-2: #3d2433;
+      --accent: #f4845f;
+      --accent-2: #f9c74f;
+      --accent-glow: rgba(244, 132, 95, 0.35);
+      --text: #f5ebe0;
+      --text-muted: #b5a9a0;
+      --radius: 16px;
+      --gradient: linear-gradient(135deg, #f4845f 0%, #f9c74f 100%);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100dvh;
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .theme-label {
+      text-align: center;
+      padding: 12px;
+      margin-bottom: 16px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--surface-2);
+    }
+    .theme-label h2 {
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .theme-label p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* === Header === */
+    header {
+      text-align: center;
+      padding: 20px 0 8px;
+    }
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .app-version {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      opacity: 0.5;
+      margin-top: 2px;
+    }
+
+    /* === Screen Separator === */
+    .screen-sep {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin: 28px 0 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .screen-sep::before, .screen-sep::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--surface-2);
+    }
+
+    /* === Lists View === */
+    .lists-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .lists-header h2 {
+      font-size: 1rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .new-list-btn {
+      background: var(--gradient);
+      color: var(--bg);
+      border: none;
+      border-radius: 10px;
+      padding: 10px 18px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    /* === List Cards === */
+    .list-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-left: 3px solid var(--accent);
+      transition: background 0.15s;
+    }
+    .list-card:active { background: var(--surface-2); }
+    .list-card-info { flex: 1; min-width: 0; }
+    .list-card-name {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .list-card-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .list-mode-badge {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text-muted);
+    }
+    .list-mode-badge[data-mode="accomplish"] {
+      background: rgba(244, 132, 95, 0.15);
+      color: var(--accent);
+    }
+    .list-card-count {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .list-card-arrow {
+      font-size: 1.5rem;
+      color: var(--text-muted);
+      margin-left: 12px;
+    }
+
+    /* === Recorder === */
+    .recorder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 0;
+    }
+    .timer {
+      font-size: 2.5rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--accent);
+      font-weight: 300;
+    }
+    .waveform-mock {
+      width: 280px;
+      height: 64px;
+      margin: 16px 0;
+      border-radius: 12px;
+      background: var(--surface);
+      border: 1px solid var(--surface-2);
+      position: relative;
+      overflow: hidden;
+    }
+    .waveform-mock::after {
+      content: '';
+      position: absolute;
+      inset: 8px 12px;
+      background: repeating-linear-gradient(
+        90deg,
+        var(--accent) 0px, var(--accent) 2px,
+        transparent 2px, transparent 6px
+      );
+      mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 280 48'%3E%3Cpath d='M0 24 Q10 10 20 24 Q30 38 40 24 Q50 8 60 24 Q70 40 80 24 Q90 6 100 24 Q110 42 120 24 Q130 4 140 24 Q150 44 160 24 Q170 8 180 24 Q190 38 200 24 Q210 12 220 24 Q230 36 240 24 Q250 10 260 24 Q270 38 280 24' fill='none' stroke='white' stroke-width='48'/%3E%3C/svg%3E");
+      mask-size: 100% 100%;
+      opacity: 0.7;
+    }
+    .record-btn {
+      width: 84px;
+      height: 84px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 3px solid transparent;
+      background-image: linear-gradient(var(--surface), var(--surface)), var(--gradient);
+      background-origin: border-box;
+      background-clip: padding-box, border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 0 24px var(--accent-glow);
+    }
+    .record-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: var(--gradient);
+    }
+    .record-hint {
+      color: var(--text-muted);
+      font-size: 0.875rem;
+      margin-top: 12px;
+    }
+
+    /* === Note Cards === */
+    .note-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .note-content { flex: 1; min-width: 0; }
+    .note-transcription {
+      font-size: 0.875rem;
+      line-height: 1.4;
+      color: var(--text);
+    }
+    .note-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .note-tag {
+      font-size: 0.6rem;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text-muted);
+    }
+    .note-tag-positive {
+      background: rgba(249, 199, 79, 0.2);
+      color: var(--accent-2);
+    }
+    .note-meta {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .note-progress {
+      height: 3px;
+      background: var(--surface-2);
+      border-radius: 3px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .note-progress-fill {
+      height: 100%;
+      background: var(--gradient);
+      width: 65%;
+    }
+    .note-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .play-btn, .delete-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+    }
+    .play-btn {
+      background: var(--surface-2);
+      color: var(--accent);
+    }
+    .delete-btn {
+      background: transparent;
+      color: var(--text-muted);
+    }
+
+    /* === Accomplish Mode Extras === */
+    .drag-handle {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      padding: 4px;
+    }
+    .note-checkbox {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--text-muted);
+      border-radius: 6px;
+      background: transparent;
+      appearance: none;
+      -webkit-appearance: none;
+      flex-shrink: 0;
+      position: relative;
+    }
+    .note-checkbox.checked {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .note-checkbox.checked::after {
+      content: '';
+      position: absolute;
+      left: 6px;
+      top: 2px;
+      width: 6px;
+      height: 12px;
+      border: solid var(--text);
+      border-width: 0 2.5px 2.5px 0;
+      transform: rotate(45deg);
+    }
+    .note-card.completed { opacity: 0.45; }
+    .note-card.completed .note-transcription {
+      text-decoration: line-through;
+      color: var(--text-muted);
+    }
+
+    /* === Back link === */
+    .back-link {
+      display: inline-block;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.85rem;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <a class="back-link" href="showboat.html">&larr; Back to Showboat</a>
+
+  <div class="theme-label">
+    <h2>Aurora Theme</h2>
+    <p>Warm gradients, amber-to-coral palette, soft rounded cards with accent borders</p>
+  </div>
+
+  <header>
+    <h1>Voice Notes</h1>
+    <p class="app-version">v21</p>
+  </header>
+
+  <!-- Lists View -->
+  <div class="lists-header">
+    <h2>Your Lists</h2>
+    <button class="new-list-btn" type="button">+ New List</button>
+  </div>
+
+  <div class="list-card">
+    <div class="list-card-info">
+      <h3 class="list-card-name">My Notes</h3>
+      <div class="list-card-meta">
+        <span class="list-mode-badge">Capture</span>
+        <span class="list-card-count">4 notes</span>
+      </div>
+    </div>
+    <span class="list-card-arrow">&rsaquo;</span>
+  </div>
+
+  <div class="list-card">
+    <div class="list-card-info">
+      <h3 class="list-card-name">Grocery Run</h3>
+      <div class="list-card-meta">
+        <span class="list-mode-badge" data-mode="accomplish">Accomplish</span>
+        <span class="list-card-count">3 notes</span>
+      </div>
+    </div>
+    <span class="list-card-arrow">&rsaquo;</span>
+  </div>
+
+  <div class="list-card">
+    <div class="list-card-info">
+      <h3 class="list-card-name">Meeting Notes</h3>
+      <div class="list-card-meta">
+        <span class="list-mode-badge">Capture</span>
+        <span class="list-card-count">7 notes</span>
+      </div>
+    </div>
+    <span class="list-card-arrow">&rsaquo;</span>
+  </div>
+
+  <!-- Detail View -->
+  <div class="screen-sep">Recording View</div>
+
+  <div class="recorder">
+    <div class="timer">1:23</div>
+    <div class="waveform-mock"></div>
+    <button class="record-btn" type="button">
+      <span class="record-icon"></span>
+    </button>
+    <p class="record-hint">Tap to stop</p>
+  </div>
+
+  <!-- Note Cards (Capture Mode) -->
+  <div class="screen-sep">Capture Mode Notes</div>
+
+  <div class="note-card">
+    <div class="note-content">
+      <p class="note-transcription">Remember to call the dentist about rescheduling the appointment for next week.</p>
+      <div class="note-tags">
+        <span class="note-tag note-tag-positive">positive</span>
+        <span class="note-tag">reminder</span>
+        <span class="note-tag">health</span>
+      </div>
+      <div class="note-meta">0:08 &middot; Feb 16, 10:30 AM</div>
+      <div class="note-progress"><div class="note-progress-fill"></div></div>
+    </div>
+    <div class="note-actions">
+      <button class="play-btn">&#9654;</button>
+      <button class="delete-btn">&#10005;</button>
+    </div>
+  </div>
+
+  <div class="note-card">
+    <div class="note-content">
+      <p class="note-transcription">The new design mockups look great. Need to share them with the team before standup.</p>
+      <div class="note-tags">
+        <span class="note-tag">work</span>
+      </div>
+      <div class="note-meta">0:12 &middot; Feb 16, 9:15 AM</div>
+      <div class="note-progress"><div class="note-progress-fill" style="width:40%"></div></div>
+    </div>
+    <div class="note-actions">
+      <button class="play-btn">&#9654;</button>
+      <button class="delete-btn">&#10005;</button>
+    </div>
+  </div>
+
+  <!-- Accomplish Mode -->
+  <div class="screen-sep">Accomplish Mode Notes</div>
+
+  <div class="note-card">
+    <span class="drag-handle">&#8801;</span>
+    <span class="note-checkbox"></span>
+    <div class="note-content">
+      <p class="note-transcription">Pick up milk and eggs</p>
+    </div>
+    <div class="note-actions">
+      <button class="play-btn">&#9654;</button>
+      <button class="delete-btn">&#10005;</button>
+    </div>
+  </div>
+
+  <div class="note-card">
+    <span class="drag-handle">&#8801;</span>
+    <span class="note-checkbox"></span>
+    <div class="note-content">
+      <p class="note-transcription">Get bread from the bakery</p>
+    </div>
+    <div class="note-actions">
+      <button class="delete-btn">&#10005;</button>
+    </div>
+  </div>
+
+  <div class="note-card completed">
+    <span class="drag-handle">&#8801;</span>
+    <span class="note-checkbox checked"></span>
+    <div class="note-content">
+      <p class="note-transcription">Buy coffee beans</p>
+    </div>
+    <div class="note-actions">
+      <button class="delete-btn">&#10005;</button>
+    </div>
+  </div>
+</body>
+</html>

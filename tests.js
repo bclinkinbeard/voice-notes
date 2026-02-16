@@ -151,10 +151,12 @@ function createElement(tag) {
       }
       return results;
     },
-    get innerHTML() {
-      return escapeHTML(el.textContent);
-    }
   };
+  let rawInnerHTML = '';
+  Object.defineProperty(el, 'innerHTML', {
+    get() { return rawInnerHTML || escapeHTML(el.textContent); },
+    set(val) { rawInnerHTML = val; }
+  });
   Object.defineProperty(el, 'className', {
     get() { return Array.from(classes).join(' '); },
     set(val) {
@@ -229,7 +231,7 @@ function createNoteCard(note, list) {
   const deleteBtn = createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'delete-btn';
-  deleteBtn.textContent = '\u2715';
+  deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
   actions.appendChild(playBtn);
   actions.appendChild(deleteBtn);
   card.appendChild(actions);
@@ -343,7 +345,8 @@ async function simulateProcessUntranscribed(notes, transcribeFn) {
 }
 
 // Note ordering logic (replicates renderListDetail ordering)
-function orderNotes(notes, noteOrder) {
+function orderNotes(notes, noteOrder, mode) {
+  let result;
   if (noteOrder && noteOrder.length > 0) {
     const noteMap = {};
     for (const n of notes) noteMap[n.id] = n;
@@ -357,11 +360,18 @@ function orderNotes(notes, noteOrder) {
     const remaining = Object.values(noteMap);
     remaining.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
     ordered.push(...remaining);
-    return ordered;
+    result = ordered;
+  } else {
+    result = [...notes];
+    result.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
   }
-  const sorted = [...notes];
-  sorted.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
-  return sorted;
+  // Move completed items to the bottom in accomplish mode
+  if (mode === 'accomplish') {
+    const incomplete = result.filter((n) => !n.completed);
+    const completed = result.filter((n) => n.completed);
+    result = [...incomplete, ...completed];
+  }
+  return result;
 }
 
 // ============================================================
@@ -603,7 +613,7 @@ suite('Note card — action buttons');
   const playBtn = card.querySelector('.play-btn');
   const deleteBtn = card.querySelector('.delete-btn');
   assertEqual(playBtn.textContent, '\u25B6', 'play button icon');
-  assertEqual(deleteBtn.textContent, '\u2715', 'delete button icon');
+  assert(deleteBtn.innerHTML.includes('<svg'), 'delete button has trash SVG icon');
   assertEqual(playBtn.type, 'button', 'play button type attribute');
   assertEqual(deleteBtn.type, 'button', 'delete button type attribute');
 }
@@ -787,6 +797,28 @@ suite('Note ordering — handles missing noteOrder entries');
   ];
   const ordered = orderNotes(notes, ['n3', 'n1', 'n2']);
   assertDeepEqual(ordered.map((n) => n.id), ['n1', 'n2'], 'skips missing note ids');
+}
+
+suite('Note ordering — completed items sink to bottom in accomplish mode');
+{
+  const notes = [
+    { id: 'n1', createdAt: '2026-02-10T00:00:00Z', completed: true },
+    { id: 'n2', createdAt: '2026-02-11T00:00:00Z', completed: false },
+    { id: 'n3', createdAt: '2026-02-12T00:00:00Z', completed: true },
+    { id: 'n4', createdAt: '2026-02-13T00:00:00Z', completed: false }
+  ];
+  const ordered = orderNotes(notes, ['n1', 'n2', 'n3', 'n4'], 'accomplish');
+  assertDeepEqual(ordered.map((n) => n.id), ['n2', 'n4', 'n1', 'n3'], 'incomplete first, completed last');
+}
+
+suite('Note ordering — capture mode does not reorder by completed');
+{
+  const notes = [
+    { id: 'n1', createdAt: '2026-02-10T00:00:00Z', completed: true },
+    { id: 'n2', createdAt: '2026-02-11T00:00:00Z', completed: false }
+  ];
+  const ordered = orderNotes(notes, ['n1', 'n2'], 'capture');
+  assertDeepEqual(ordered.map((n) => n.id), ['n1', 'n2'], 'order preserved in capture mode');
 }
 
 // ============================================================
@@ -1122,10 +1154,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v17'), 'index.html version is v17');
+  assert(indexHtml.includes('v18'), 'index.html version is v18');
 
   const swJs = fs.readFileSync(__dirname + '/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v17'), 'sw.js cache version is v17');
+  assert(swJs.includes('voice-notes-v18'), 'sw.js cache version is v18');
 }
 
 } // end runTests

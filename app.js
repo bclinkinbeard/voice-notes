@@ -353,6 +353,15 @@ function stopWaveform() {
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+function formatTranscriptionSegment(text) {
+  if (!text) return text;
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  if (!/[.!?]$/.test(text)) {
+    text += '.';
+  }
+  return text;
+}
+
 function startTranscription() {
   if (!SpeechRecognition) return;
 
@@ -369,7 +378,8 @@ function startTranscription() {
         if (e.results[i].isFinal) {
           const text = e.results[i][0].transcript.trim();
           if (text) {
-            transcriptionResult += (transcriptionResult ? ' ' : '') + text;
+            const formatted = formatTranscriptionSegment(text);
+            transcriptionResult += (transcriptionResult ? ' ' : '') + formatted;
           }
         }
       }
@@ -1092,12 +1102,12 @@ recordBtn.addEventListener('click', async () => {
     recordBusy = true;
 
     if (isRecording) {
-      isRecording = false;
       recordBtn.classList.remove('recording');
       recorderEl.classList.remove('recording');
       recordHint.textContent = 'Tap to record';
 
       const result = await stopRecording();
+      isRecording = false;
 
       if (result && result.duration > 0) {
         const list = await getList(currentListId);

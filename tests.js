@@ -55,6 +55,15 @@ function formatDate(isoString) {
   });
 }
 
+function formatTranscriptionSegment(text) {
+  if (!text) return text;
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  if (!/[.!?]$/.test(text)) {
+    text += '.';
+  }
+  return text;
+}
+
 function accumulateTranscription(resultSets) {
   let transcriptionResult = '';
   for (const resultSet of resultSets) {
@@ -62,7 +71,8 @@ function accumulateTranscription(resultSets) {
       if (resultSet[i].isFinal) {
         const text = resultSet[i][0].transcript.trim();
         if (text) {
-          transcriptionResult += (transcriptionResult ? ' ' : '') + text;
+          const formatted = formatTranscriptionSegment(text);
+          transcriptionResult += (transcriptionResult ? ' ' : '') + formatted;
         }
       }
     }
@@ -415,6 +425,17 @@ assert(dateStr.includes('Feb') || dateStr.includes('15'), 'includes expected mon
 const dateStr2 = formatDate('2026-12-25T00:00:00.000Z');
 assert(dateStr2.includes('Dec') || dateStr2.includes('25'), 'handles December date');
 
+suite('formatTranscriptionSegment');
+assertEqual(formatTranscriptionSegment('hello world'), 'Hello world.', 'capitalizes first letter and adds period');
+assertEqual(formatTranscriptionSegment('Hello world'), 'Hello world.', 'already capitalized, adds period');
+assertEqual(formatTranscriptionSegment('hello world.'), 'Hello world.', 'does not double-add period');
+assertEqual(formatTranscriptionSegment('is it done?'), 'Is it done?', 'preserves question mark');
+assertEqual(formatTranscriptionSegment('wow!'), 'Wow!', 'preserves exclamation mark');
+assertEqual(formatTranscriptionSegment('a'), 'A.', 'single character gets capitalized and period');
+assertEqual(formatTranscriptionSegment(''), '', 'empty string returns empty');
+assertEqual(formatTranscriptionSegment(null), null, 'null returns null');
+assertEqual(formatTranscriptionSegment(undefined), undefined, 'undefined returns undefined');
+
 suite('Transcription result accumulation');
 assertEqual(
   accumulateTranscription([]),
@@ -423,29 +444,29 @@ assertEqual(
 );
 assertEqual(
   accumulateTranscription([[{ isFinal: true, 0: { transcript: 'Hello world' } }]]),
-  'Hello world',
-  'single final result'
+  'Hello world.',
+  'single final result gets period'
 );
 assertEqual(
   accumulateTranscription([
     [{ isFinal: true, 0: { transcript: 'Hello' } }],
     [{ isFinal: true, 0: { transcript: 'world' } }]
   ]),
-  'Hello world',
-  'multiple batches joined with space'
+  'Hello. World.',
+  'multiple batches capitalized and punctuated'
 );
 assertEqual(
   accumulateTranscription([
     [{ isFinal: false, 0: { transcript: 'Hel' } }],
     [{ isFinal: true, 0: { transcript: 'Hello' } }]
   ]),
-  'Hello',
+  'Hello.',
   'interim results skipped'
 );
 assertEqual(
   accumulateTranscription([[{ isFinal: true, 0: { transcript: '  spaced  ' } }]]),
-  'spaced',
-  'results are trimmed'
+  'Spaced.',
+  'results are trimmed and formatted'
 );
 assertEqual(
   accumulateTranscription([[{ isFinal: true, 0: { transcript: '' } }]]),
@@ -465,8 +486,8 @@ assertEqual(
       { isFinal: false, 0: { transcript: 'Nope' } }
     ]
   ]),
-  'First Second',
-  'multiple results in single batch: finals joined, interim skipped'
+  'First. Second.',
+  'multiple results in single batch: finals punctuated, interim skipped'
 );
 
 suite('stopTranscription logic (async)');
@@ -1154,6 +1175,7 @@ suite('Source file integrity');
   const fs = require('fs');
   const appJs = fs.readFileSync(__dirname + '/app.js', 'utf8');
 
+  assert(appJs.includes('formatTranscriptionSegment'), 'app.js defines formatTranscriptionSegment');
   assert(appJs.includes('SpeechRecognition'), 'app.js references SpeechRecognition');
   assert(appJs.includes('startTranscription'), 'app.js defines startTranscription');
   assert(appJs.includes('stopTranscription'), 'app.js defines stopTranscription');
@@ -1230,10 +1252,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v19'), 'index.html version is v19');
+  assert(indexHtml.includes('v20'), 'index.html version is v20');
 
   const swJs = fs.readFileSync(__dirname + '/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v19'), 'sw.js cache version is v19');
+  assert(swJs.includes('voice-notes-v20'), 'sw.js cache version is v20');
 }
 
 } // end runTests

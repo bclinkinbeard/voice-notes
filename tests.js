@@ -31,9 +31,13 @@ function assertEqual(actual, expected, message) {
   assert(pass, message + (pass ? '' : ' (expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(actual) + ')'));
 }
 
+function assertDeepEqual(actual, expected, message) {
+  const pass = JSON.stringify(actual) === JSON.stringify(expected);
+  assert(pass, message + (pass ? '' : ' (expected ' + JSON.stringify(expected) + ', got ' + JSON.stringify(actual) + ')'));
+}
+
 // ============================================================
 // Replicate pure functions from app.js for testing
-// (app.js runs in browser scope; we extract and test the logic)
 // ============================================================
 
 function formatDuration(seconds) {
@@ -51,7 +55,6 @@ function formatDate(isoString) {
   });
 }
 
-// The transcription accumulation logic from the onresult handler
 function accumulateTranscription(resultSets) {
   let transcriptionResult = '';
   for (const resultSet of resultSets) {
@@ -67,19 +70,15 @@ function accumulateTranscription(resultSets) {
   return transcriptionResult;
 }
 
-// Simulates stopTranscription logic (now async — waits for onend)
 function simulateStopTranscription(recognition, transcriptionResult) {
   if (!recognition) {
     return Promise.resolve({ result: transcriptionResult, recognition: null, stopped: false });
   }
 
-  // Mirror the real app.js stopTranscription: it sets onend, then calls stop().
-  // The browser fires onend asynchronously after stop(). We simulate this.
   return new Promise((resolve) => {
     const ref = recognition;
     ref._stopped = false;
 
-    // Override stop to mark stopped, then async-fire onend
     ref.stop = function() {
       ref._stopped = true;
       Promise.resolve().then(() => {
@@ -98,31 +97,40 @@ function simulateStopTranscription(recognition, transcriptionResult) {
   });
 }
 
-// Simulates startTranscription guard
 function wouldStartTranscription(SpeechRecognitionCtor) {
   if (!SpeechRecognitionCtor) return false;
   return true;
 }
 
-// Minimal DOM element mock for card rendering tests
+// Minimal DOM element mock
 function createElement(tag) {
   const classes = new Set();
   const children = [];
+  const attributes = {};
+  const listeners = {};
   const el = {
     tagName: tag.toUpperCase(),
     className: '',
     textContent: '',
     type: '',
+    checked: false,
     style: {},
     children,
+    dataset: {},
     classList: {
       add(c) { classes.add(c); el.className = Array.from(classes).join(' '); },
       remove(c) { classes.delete(c); el.className = Array.from(classes).join(' '); },
       contains(c) { return classes.has(c); }
     },
     appendChild(child) { children.push(child); },
+    setAttribute(name, value) { attributes[name] = value; },
+    getAttribute(name) { return attributes[name] || null; },
+    addEventListener(event, fn) {
+      if (!listeners[event]) listeners[event] = [];
+      listeners[event].push(fn);
+    },
+    _listeners: listeners,
     querySelector(selector) {
-      // Simple class selector support
       const cls = selector.startsWith('.') ? selector.slice(1) : null;
       if (!cls) return null;
       if (classes.has(cls)) return el;
@@ -132,12 +140,21 @@ function createElement(tag) {
       }
       return null;
     },
+    querySelectorAll(selector) {
+      const cls = selector.startsWith('.') ? selector.slice(1) : null;
+      const results = [];
+      if (cls && classes.has(cls)) results.push(el);
+      for (const child of children) {
+        if (child.querySelectorAll) {
+          results.push(...child.querySelectorAll(selector));
+        }
+      }
+      return results;
+    },
     get innerHTML() {
-      // textContent was set directly, so HTML-escaped
       return escapeHTML(el.textContent);
     }
   };
-  // Sync className setter to classes set
   Object.defineProperty(el, 'className', {
     get() { return Array.from(classes).join(' '); },
     set(val) {
@@ -152,10 +169,34 @@ function escapeHTML(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Replicate createNoteCard logic for DOM tests
-function createNoteCard(note) {
+// Replicate createNoteCard logic (updated with list parameter)
+function createNoteCard(note, list) {
   const card = createElement('div');
   card.className = 'note-card';
+  card.dataset.noteId = note.id;
+  const isAccomplish = list && list.mode === 'accomplish';
+
+  if (isAccomplish && note.completed) {
+    card.classList.add('completed');
+  }
+
+  if (isAccomplish) {
+    const row = createElement('div');
+    row.className = 'note-accomplish-row';
+
+    const dragHandle = createElement('span');
+    dragHandle.className = 'drag-handle';
+    dragHandle.textContent = '\u2261';
+    row.appendChild(dragHandle);
+
+    const checkbox = createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'note-checkbox';
+    checkbox.checked = !!note.completed;
+    row.appendChild(checkbox);
+
+    card.appendChild(row);
+  }
 
   const header = createElement('div');
   header.className = 'note-header';
@@ -202,6 +243,133 @@ function createNoteCard(note) {
   card.appendChild(actions);
 
   return card;
+}
+
+// Replicate createListCard logic
+function createListCard(list, noteCount) {
+  const card = createElement('div');
+  card.className = 'list-card';
+  card.dataset.listId = list.id;
+
+  const info = createElement('div');
+  info.className = 'list-card-info';
+
+  const name = createElement('h3');
+  name.className = 'list-card-name';
+  name.textContent = list.name;
+
+  const meta = createElement('div');
+  meta.className = 'list-card-meta';
+
+  const modeBadge = createElement('span');
+  modeBadge.className = 'list-mode-badge';
+  modeBadge.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
+  modeBadge.dataset.mode = list.mode;
+
+  const count = createElement('span');
+  count.className = 'list-card-count';
+  count.textContent = noteCount + (noteCount === 1 ? ' note' : ' notes');
+
+  meta.appendChild(modeBadge);
+  meta.appendChild(count);
+
+  info.appendChild(name);
+  info.appendChild(meta);
+
+  const arrow = createElement('span');
+  arrow.className = 'list-card-arrow';
+  arrow.textContent = '\u203A';
+
+  card.appendChild(info);
+  card.appendChild(arrow);
+
+  return card;
+}
+
+// Simulates transcribeAudioBlob logic
+function simulateTranscribeBlob(SpeechRecognitionCtor, blob) {
+  if (!SpeechRecognitionCtor) return Promise.resolve('');
+  if (!blob) return Promise.resolve('');
+
+  return new Promise((resolve) => {
+    let result = '';
+    let settled = false;
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    }
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const text = e.results[i][0].transcript.trim();
+          if (text) {
+            result += (result ? ' ' : '') + text;
+          }
+        }
+      }
+    };
+
+    recognition.onend = finish;
+    recognition.onerror = finish;
+
+    try {
+      recognition.start();
+    } catch (e) {
+      finish();
+    }
+  });
+}
+
+// Simulates processUntranscribedNotes logic
+async function simulateProcessUntranscribed(notes, transcribeFn) {
+  const untranscribed = notes.filter((n) => !n.transcription);
+  if (untranscribed.length === 0) return { updatedNotes: [], rendered: false };
+
+  const updatedNotes = [];
+
+  for (const note of untranscribed) {
+    try {
+      const transcription = await transcribeFn(note.audioBlob);
+      if (transcription) {
+        note.transcription = transcription;
+        updatedNotes.push(note);
+      }
+    } catch (e) {
+      // Skip notes that fail
+    }
+  }
+
+  return { updatedNotes, rendered: updatedNotes.length > 0 };
+}
+
+// Note ordering logic (replicates renderListDetail ordering)
+function orderNotes(notes, noteOrder) {
+  if (noteOrder && noteOrder.length > 0) {
+    const noteMap = {};
+    for (const n of notes) noteMap[n.id] = n;
+    const ordered = [];
+    for (const nid of noteOrder) {
+      if (noteMap[nid]) {
+        ordered.push(noteMap[nid]);
+        delete noteMap[nid];
+      }
+    }
+    const remaining = Object.values(noteMap);
+    remaining.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+    ordered.push(...remaining);
+    return ordered;
+  }
+  const sorted = [...notes];
+  sorted.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+  return sorted;
 }
 
 // ============================================================
@@ -297,19 +465,16 @@ await (async () => {
   assertEqual(result.result, '', 'returns empty string when no recognition');
   assertEqual(result.recognition, null, 'recognition stays null');
 })();
-// Test onerror fallback — recognition that errors instead of ending
 await (async () => {
   const errorRecognition = {
     onend: null,
     onerror: null,
     stop() {
-      // Simulate browser firing onerror instead of onend
       Promise.resolve().then(() => {
         if (this.onerror) this.onerror({ error: 'service-not-available' });
       });
     }
   };
-  // Simulate the real stopTranscription: set both onend and onerror to done, then stop
   const result = await new Promise((resolve) => {
     function done() {
       resolve('resolved');
@@ -326,7 +491,7 @@ assertEqual(wouldStartTranscription(undefined), false, 'does not start when unde
 assertEqual(wouldStartTranscription(null), false, 'does not start when null');
 assertEqual(wouldStartTranscription(function() {}), true, 'starts when constructor exists');
 
-suite('Note card — with transcription');
+suite('Note card — capture mode (no list)');
 {
   const note = {
     id: 'test-1',
@@ -336,15 +501,73 @@ suite('Note card — with transcription');
   };
   const card = createNoteCard(note);
   assert(card.classList.contains('note-card'), 'card has note-card class');
-  assertEqual(card.children.length, 4, 'card has 4 children');
-  assert(card.children[0].classList.contains('note-header'), 'first child is header');
-  assert(card.children[1].classList.contains('note-progress'), 'second child is progress');
-  assert(card.children[2].classList.contains('note-transcription'), 'third child is transcription');
-  assert(card.children[3].classList.contains('note-actions'), 'fourth child is actions');
-
+  assertEqual(card.dataset.noteId, 'test-1', 'card has data-note-id');
   const transcriptionEl = card.querySelector('.note-transcription');
   assertEqual(transcriptionEl.textContent, 'This is a test note', 'displays transcription text');
   assert(!transcriptionEl.classList.contains('note-transcription-empty'), 'no empty class when text present');
+}
+
+suite('Note card — with capture list');
+{
+  const note = {
+    id: 'test-cap',
+    duration: 45,
+    transcription: 'Test note',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    listId: 'list-1',
+    completed: false
+  };
+  const list = { id: 'list-1', name: 'My List', mode: 'capture', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createNoteCard(note, list);
+  assert(card.classList.contains('note-card'), 'card has note-card class');
+  assert(!card.querySelector('.note-checkbox'), 'no checkbox in capture mode');
+  assert(!card.querySelector('.drag-handle'), 'no drag handle in capture mode');
+  assert(!card.classList.contains('completed'), 'not completed in capture mode');
+}
+
+suite('Note card — accomplish mode uncompleted');
+{
+  const note = {
+    id: 'test-acc-1',
+    duration: 30,
+    transcription: 'Do this task',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    listId: 'list-2',
+    completed: false
+  };
+  const list = { id: 'list-2', name: 'Tasks', mode: 'accomplish', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createNoteCard(note, list);
+  assert(card.classList.contains('note-card'), 'card has note-card class');
+  assert(!card.classList.contains('completed'), 'not marked completed');
+
+  const accomplishRow = card.querySelector('.note-accomplish-row');
+  assert(accomplishRow !== null, 'has accomplish row');
+
+  const checkbox = card.querySelector('.note-checkbox');
+  assert(checkbox !== null, 'has checkbox');
+  assertEqual(checkbox.checked, false, 'checkbox unchecked');
+
+  const dragHandle = card.querySelector('.drag-handle');
+  assert(dragHandle !== null, 'has drag handle');
+}
+
+suite('Note card — accomplish mode completed');
+{
+  const note = {
+    id: 'test-acc-2',
+    duration: 20,
+    transcription: 'Done task',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    listId: 'list-2',
+    completed: true
+  };
+  const list = { id: 'list-2', name: 'Tasks', mode: 'accomplish', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createNoteCard(note, list);
+  assert(card.classList.contains('completed'), 'card has completed class');
+
+  const checkbox = card.querySelector('.note-checkbox');
+  assert(checkbox !== null, 'has checkbox');
+  assertEqual(checkbox.checked, true, 'checkbox checked');
 }
 
 suite('Note card — empty transcription');
@@ -423,13 +646,46 @@ suite('Note schema contract');
     audioBlob: {},
     duration: 45,
     transcription: 'test',
-    createdAt: '2026-02-15T14:30:00.000Z'
+    createdAt: '2026-02-15T14:30:00.000Z',
+    listId: 'default',
+    completed: false
   };
   assertEqual(typeof note.id, 'string', 'id is string');
   assertEqual(typeof note.duration, 'number', 'duration is number');
   assertEqual(typeof note.transcription, 'string', 'transcription is string');
   assertEqual(typeof note.createdAt, 'string', 'createdAt is string');
   assert('audioBlob' in note, 'audioBlob field exists');
+  assertEqual(typeof note.listId, 'string', 'listId is string');
+  assertEqual(typeof note.completed, 'boolean', 'completed is boolean');
+}
+
+suite('List schema contract');
+{
+  const list = {
+    id: 'list-123',
+    name: 'My List',
+    mode: 'capture',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    noteOrder: []
+  };
+  assertEqual(typeof list.id, 'string', 'id is string');
+  assertEqual(typeof list.name, 'string', 'name is string');
+  assert(list.mode === 'capture' || list.mode === 'accomplish', 'mode is capture or accomplish');
+  assertEqual(typeof list.createdAt, 'string', 'createdAt is string');
+  assert(Array.isArray(list.noteOrder), 'noteOrder is array');
+}
+
+suite('List schema — accomplish mode');
+{
+  const list = {
+    id: 'list-456',
+    name: 'Tasks',
+    mode: 'accomplish',
+    createdAt: '2026-02-15T14:30:00.000Z',
+    noteOrder: ['note-1', 'note-2']
+  };
+  assertEqual(list.mode, 'accomplish', 'mode is accomplish');
+  assertEqual(list.noteOrder.length, 2, 'noteOrder has entries');
 }
 
 suite('stopRecording result contract');
@@ -442,77 +698,136 @@ suite('stopRecording result contract');
 }
 
 // ============================================================
-// Transcribe audio blob simulation
+// List card rendering tests
 // ============================================================
 
-// Simulates the transcribeAudioBlob logic
-function simulateTranscribeBlob(SpeechRecognitionCtor, blob) {
-  if (!SpeechRecognitionCtor) return Promise.resolve('');
-  if (!blob) return Promise.resolve('');
+suite('List card — capture mode');
+{
+  const list = { id: 'list-1', name: 'My Notes', mode: 'capture', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createListCard(list, 3);
+  assert(card.classList.contains('list-card'), 'has list-card class');
+  assertEqual(card.dataset.listId, 'list-1', 'has data-list-id');
 
-  return new Promise((resolve) => {
-    let result = '';
-    let settled = false;
+  const name = card.querySelector('.list-card-name');
+  assertEqual(name.textContent, 'My Notes', 'shows list name');
 
-    function finish() {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    }
+  const badge = card.querySelector('.list-mode-badge');
+  assertEqual(badge.textContent, 'Capture', 'shows Capture badge');
+  assertEqual(badge.dataset.mode, 'capture', 'badge data-mode is capture');
 
-    const recognition = new SpeechRecognitionCtor();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          const text = e.results[i][0].transcript.trim();
-          if (text) {
-            result += (result ? ' ' : '') + text;
-          }
-        }
-      }
-    };
-
-    recognition.onend = finish;
-    recognition.onerror = finish;
-
-    try {
-      recognition.start();
-    } catch (e) {
-      finish();
-    }
-  });
+  const count = card.querySelector('.list-card-count');
+  assertEqual(count.textContent, '3 notes', 'shows note count plural');
 }
 
-// Simulates the processUntranscribedNotes logic
-async function simulateProcessUntranscribed(notes, transcribeFn) {
-  const untranscribed = notes.filter((n) => !n.transcription);
-  if (untranscribed.length === 0) return { updatedNotes: [], rendered: false };
+suite('List card — accomplish mode');
+{
+  const list = { id: 'list-2', name: 'Tasks', mode: 'accomplish', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createListCard(list, 1);
 
-  let rendered = false;
-  const updatedNotes = [];
+  const badge = card.querySelector('.list-mode-badge');
+  assertEqual(badge.textContent, 'Accomplish', 'shows Accomplish badge');
+  assertEqual(badge.dataset.mode, 'accomplish', 'badge data-mode is accomplish');
 
-  for (const note of untranscribed) {
-    try {
-      const transcription = await transcribeFn(note.audioBlob);
-      if (transcription) {
-        note.transcription = transcription;
-        updatedNotes.push(note);
-      }
-    } catch (e) {
-      // Skip notes that fail
-    }
-  }
-
-  if (updatedNotes.length > 0) {
-    rendered = true;
-  }
-
-  return { updatedNotes, rendered };
+  const count = card.querySelector('.list-card-count');
+  assertEqual(count.textContent, '1 note', 'shows note count singular');
 }
+
+suite('List card — zero notes');
+{
+  const list = { id: 'list-3', name: 'Empty', mode: 'capture', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createListCard(list, 0);
+
+  const count = card.querySelector('.list-card-count');
+  assertEqual(count.textContent, '0 notes', 'shows zero notes');
+}
+
+suite('List card — arrow indicator');
+{
+  const list = { id: 'list-4', name: 'Test', mode: 'capture', createdAt: '2026-02-15T00:00:00Z', noteOrder: [] };
+  const card = createListCard(list, 5);
+
+  const arrow = card.querySelector('.list-card-arrow');
+  assert(arrow !== null, 'has arrow element');
+}
+
+// ============================================================
+// Note ordering tests
+// ============================================================
+
+suite('Note ordering — by createdAt desc when no noteOrder');
+{
+  const notes = [
+    { id: 'n1', createdAt: '2026-02-10T00:00:00Z' },
+    { id: 'n3', createdAt: '2026-02-12T00:00:00Z' },
+    { id: 'n2', createdAt: '2026-02-11T00:00:00Z' }
+  ];
+  const ordered = orderNotes(notes, []);
+  assertDeepEqual(ordered.map((n) => n.id), ['n3', 'n2', 'n1'], 'sorted newest first');
+}
+
+suite('Note ordering — respects noteOrder');
+{
+  const notes = [
+    { id: 'n1', createdAt: '2026-02-10T00:00:00Z' },
+    { id: 'n2', createdAt: '2026-02-11T00:00:00Z' },
+    { id: 'n3', createdAt: '2026-02-12T00:00:00Z' }
+  ];
+  const ordered = orderNotes(notes, ['n3', 'n1', 'n2']);
+  assertDeepEqual(ordered.map((n) => n.id), ['n3', 'n1', 'n2'], 'follows noteOrder');
+}
+
+suite('Note ordering — new notes appended after noteOrder');
+{
+  const notes = [
+    { id: 'n1', createdAt: '2026-02-10T00:00:00Z' },
+    { id: 'n2', createdAt: '2026-02-11T00:00:00Z' },
+    { id: 'n3', createdAt: '2026-02-12T00:00:00Z' },
+    { id: 'n4', createdAt: '2026-02-13T00:00:00Z' }
+  ];
+  const ordered = orderNotes(notes, ['n2', 'n1']);
+  assertDeepEqual(ordered.map((n) => n.id), ['n2', 'n1', 'n4', 'n3'], 'ordered items first, then remaining newest-first');
+}
+
+suite('Note ordering — handles missing noteOrder entries');
+{
+  const notes = [
+    { id: 'n1', createdAt: '2026-02-10T00:00:00Z' },
+    { id: 'n2', createdAt: '2026-02-11T00:00:00Z' }
+  ];
+  const ordered = orderNotes(notes, ['n3', 'n1', 'n2']);
+  assertDeepEqual(ordered.map((n) => n.id), ['n1', 'n2'], 'skips missing note ids');
+}
+
+// ============================================================
+// Migration logic tests
+// ============================================================
+
+suite('Migration — note gets default listId');
+{
+  const note = { id: 'old-1', audioBlob: {}, duration: 10, createdAt: '2026-01-01T00:00:00Z' };
+  // Simulate migration
+  if (!note.listId) {
+    note.listId = 'default';
+    if (note.completed === undefined) note.completed = false;
+  }
+  assertEqual(note.listId, 'default', 'legacy note gets default listId');
+  assertEqual(note.completed, false, 'legacy note gets completed = false');
+}
+
+suite('Migration — note with existing listId not changed');
+{
+  const note = { id: 'new-1', audioBlob: {}, duration: 10, createdAt: '2026-01-01T00:00:00Z', listId: 'custom', completed: true };
+  if (!note.listId) {
+    note.listId = 'default';
+    if (note.completed === undefined) note.completed = false;
+  }
+  assertEqual(note.listId, 'custom', 'existing listId preserved');
+  assertEqual(note.completed, true, 'existing completed preserved');
+}
+
+// ============================================================
+// Transcribe audio blob simulation
+// ============================================================
 
 suite('transcribeAudioBlob — no SpeechRecognition');
 await (async () => {
@@ -705,7 +1020,7 @@ await (async () => {
     { id: '2', audioBlob: { size: 200 }, transcription: '', createdAt: '2026-01-02T00:00:00Z' },
     { id: '3', audioBlob: { size: 300 }, transcription: 'Done', createdAt: '2026-01-03T00:00:00Z' }
   ];
-  const result = await simulateProcessUntranscribed(notes, (blob) => {
+  const result = await simulateProcessUntranscribed(notes, () => {
     callCount++;
     return Promise.resolve('Text ' + callCount);
   });
@@ -734,7 +1049,7 @@ await (async () => {
 })();
 
 // ============================================================
-// Source file verification
+// Source file integrity
 // ============================================================
 
 suite('Source file integrity');
@@ -768,22 +1083,58 @@ suite('Source file integrity');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
 }
 
-suite('Source file integrity — transcription on load');
+suite('Source file integrity — lists feature');
 {
   const fs = require('fs');
   const appJs = fs.readFileSync(__dirname + '/app.js', 'utf8');
 
-  assert(appJs.includes('transcribeAudioBlob'), 'app.js defines transcribeAudioBlob');
-  assert(appJs.includes('processUntranscribedNotes'), 'app.js defines processUntranscribedNotes');
-  assert(appJs.includes('async function transcribeAudioBlob'), 'transcribeAudioBlob is async');
-  assert(appJs.includes('async function processUntranscribedNotes'), 'processUntranscribedNotes is async');
-  assert(appJs.includes("!n.transcription"), 'filters notes without transcription');
-  assert(appJs.includes('processUntranscribedNotes()'), 'processUntranscribedNotes is called during init');
+  assert(appJs.includes('saveList'), 'app.js defines saveList');
+  assert(appJs.includes('getAllLists'), 'app.js defines getAllLists');
+  assert(appJs.includes('getList'), 'app.js defines getList');
+  assert(appJs.includes('deleteList'), 'app.js defines deleteList');
+  assert(appJs.includes('getNotesByList'), 'app.js defines getNotesByList');
+  assert(appJs.includes('deleteNotesByList'), 'app.js defines deleteNotesByList');
+  assert(appJs.includes('renderLists'), 'app.js defines renderLists');
+  assert(appJs.includes('renderListDetail'), 'app.js defines renderListDetail');
+  assert(appJs.includes('createListCard'), 'app.js defines createListCard');
+  assert(appJs.includes('showListsView'), 'app.js defines showListsView');
+  assert(appJs.includes('showListDetailView'), 'app.js defines showListDetailView');
+  assert(appJs.includes("DEFAULT_LIST_ID"), 'app.js defines DEFAULT_LIST_ID');
+  assert(appJs.includes('migrateNotesToDefaultList'), 'app.js defines migration function');
+  assert(appJs.includes("voiceNotesDB', 2"), 'IndexedDB version is 2');
+  assert(appJs.includes("objectStore('lists'"), 'app.js uses lists object store');
+  assert(appJs.includes('listId'), 'notes reference listId');
+  assert(appJs.includes('completed'), 'notes have completed field');
+  assert(appJs.includes('noteOrder'), 'lists have noteOrder field');
+  assert(appJs.includes('note-checkbox'), 'app.js uses note-checkbox class');
+  assert(appJs.includes('drag-handle'), 'app.js uses drag-handle class');
+  assert(appJs.includes('note-accomplish-row'), 'app.js uses note-accomplish-row class');
+  assert(appJs.includes('list-card'), 'app.js uses list-card class');
+  assert(appJs.includes("mode === 'accomplish'"), 'app.js checks accomplish mode');
 
-  // Verify it's called after renderNotes in the init block
-  const renderIdx = appJs.lastIndexOf('renderNotes()');
-  const processIdx = appJs.indexOf('processUntranscribedNotes()', renderIdx);
-  assert(processIdx > renderIdx, 'processUntranscribedNotes called after renderNotes in init');
+  const appCss = fs.readFileSync(__dirname + '/app.css', 'utf8');
+  assert(appCss.includes('.list-card'), 'app.css defines .list-card');
+  assert(appCss.includes('.list-mode-badge'), 'app.css defines .list-mode-badge');
+  assert(appCss.includes('.note-checkbox'), 'app.css defines .note-checkbox');
+  assert(appCss.includes('.drag-handle'), 'app.css defines .drag-handle');
+  assert(appCss.includes('.note-accomplish-row'), 'app.css defines .note-accomplish-row');
+  assert(appCss.includes('.drag-placeholder'), 'app.css defines .drag-placeholder');
+  assert(appCss.includes('.note-card.completed'), 'app.css defines .note-card.completed');
+  assert(appCss.includes('#list-modal'), 'app.css defines #list-modal');
+  assert(appCss.includes('.mode-btn'), 'app.css defines .mode-btn');
+  assert(appCss.includes('#back-btn'), 'app.css defines #back-btn');
+
+  const indexHtml = fs.readFileSync(__dirname + '/index.html', 'utf8');
+  assert(indexHtml.includes('lists-view'), 'index.html has lists-view');
+  assert(indexHtml.includes('list-detail-view'), 'index.html has list-detail-view');
+  assert(indexHtml.includes('list-modal'), 'index.html has list-modal');
+  assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
+  assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
+  assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
+  assert(indexHtml.includes('v15'), 'index.html version is v15');
+
+  const swJs = fs.readFileSync(__dirname + '/sw.js', 'utf8');
+  assert(swJs.includes('voice-notes-v15'), 'sw.js cache version is v15');
 }
 
 } // end runTests

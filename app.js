@@ -1,15 +1,40 @@
 'use strict';
 
+// --- Constants ---
+
+const DEFAULT_LIST_ID = 'default';
+const MODE_DESCRIPTIONS = {
+  capture: 'Record and save voice notes.',
+  accomplish: 'Track tasks with checkboxes and reordering.'
+};
+
 // --- DOM References ---
 
+const backBtn = document.getElementById('back-btn');
+const listsView = document.getElementById('lists-view');
+const listsContainer = document.getElementById('lists-container');
+const listsEmptyState = document.getElementById('lists-empty-state');
+const newListBtn = document.getElementById('new-list-btn');
+const listDetailView = document.getElementById('list-detail-view');
+const listDetailName = document.getElementById('list-detail-name');
+const listDetailMode = document.getElementById('list-detail-mode');
+const renameListBtn = document.getElementById('rename-list-btn');
+const deleteListBtn = document.getElementById('delete-list-btn');
+const listNotesEl = document.getElementById('list-notes');
+const listEmptyState = document.getElementById('list-empty-state');
 const recordBtn = document.getElementById('record-btn');
 const recordHint = document.getElementById('record-hint');
-const notesList = document.getElementById('notes-list');
-const emptyState = document.getElementById('empty-state');
 const timerEl = document.getElementById('timer');
 const recorderEl = document.getElementById('recorder');
 const waveformCanvas = document.getElementById('waveform');
 const waveformCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
+const listModal = document.getElementById('list-modal');
+const listModalTitle = document.getElementById('list-modal-title');
+const listNameInput = document.getElementById('list-name-input');
+const modeSelector = document.getElementById('mode-selector');
+const modeDescription = document.getElementById('mode-description');
+const modalCancelBtn = document.getElementById('modal-cancel-btn');
+const modalSaveBtn = document.getElementById('modal-save-btn');
 
 // --- State ---
 
@@ -27,6 +52,10 @@ let isRecording = false;
 let recordBusy = false;
 let speechRecognition = null;
 let transcriptionResult = '';
+let currentListId = null;
+let editingListId = null;
+let selectedMode = 'capture';
+let dragState = null;
 
 // --- IndexedDB ---
 
@@ -36,16 +65,44 @@ function openDB() {
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open('voiceNotesDB', 1);
+    const request = indexedDB.open('voiceNotesDB', 2);
 
     request.onupgradeneeded = (e) => {
       const db = e.target.result;
+      const oldVersion = e.oldVersion;
+
       if (!db.objectStoreNames.contains('notes')) {
         db.createObjectStore('notes', { keyPath: 'id' });
       }
+
+      if (!db.objectStoreNames.contains('lists')) {
+        db.createObjectStore('lists', { keyPath: 'id' });
+      }
+
+      // Add listId index to notes if upgrading from v1
+      if (oldVersion < 2) {
+        const noteStore = e.target.transaction.objectStore('notes');
+        if (!noteStore.indexNames.contains('listId')) {
+          noteStore.createIndex('listId', 'listId', { unique: false });
+        }
+
+        // Create default list
+        const listStore = e.target.transaction.objectStore('lists');
+        listStore.put({
+          id: DEFAULT_LIST_ID,
+          name: 'My Notes',
+          mode: 'capture',
+          createdAt: new Date().toISOString(),
+          noteOrder: []
+        });
+      }
     };
 
-    request.onsuccess = (e) => resolve(e.target.result);
+    request.onsuccess = (e) => {
+      const db = e.target.result;
+      // Migrate existing notes to default list
+      migrateNotesToDefaultList(db).then(() => resolve(db)).catch(() => resolve(db));
+    };
     request.onerror = (e) => {
       dbPromise = null;
       reject(e.target.error);
@@ -53,6 +110,30 @@ function openDB() {
   });
 
   return dbPromise;
+}
+
+function migrateNotesToDefaultList(db) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('notes', 'readwrite');
+    const store = tx.objectStore('notes');
+    const request = store.getAll();
+
+    request.onsuccess = () => {
+      const notes = request.result;
+      let migrated = 0;
+      for (const note of notes) {
+        if (!note.listId) {
+          note.listId = DEFAULT_LIST_ID;
+          if (note.completed === undefined) note.completed = false;
+          store.put(note);
+          migrated++;
+        }
+      }
+      tx.oncomplete = () => resolve(migrated);
+      tx.onerror = () => reject(tx.error);
+    };
+    request.onerror = () => reject(request.error);
+  });
 }
 
 function saveNote(note) {
@@ -77,6 +158,25 @@ function getAllNotes() {
   });
 }
 
+function getNotesByList(listId) {
+  return openDB().then((db) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('notes', 'readonly');
+      const store = tx.objectStore('notes');
+      if (store.indexNames.contains('listId')) {
+        const index = store.index('listId');
+        const request = index.getAll(listId);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = (e) => reject(e.target.error);
+      } else {
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result.filter((n) => n.listId === listId));
+        request.onerror = (e) => reject(e.target.error);
+      }
+    });
+  });
+}
+
 function deleteNote(id) {
   return openDB().then((db) => {
     return new Promise((resolve, reject) => {
@@ -84,6 +184,68 @@ function deleteNote(id) {
       tx.objectStore('notes').delete(id);
       tx.oncomplete = () => resolve();
       tx.onerror = (e) => reject(e.target.error);
+    });
+  });
+}
+
+function deleteNotesByList(listId) {
+  return getNotesByList(listId).then((notes) => {
+    return openDB().then((db) => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('notes', 'readwrite');
+        const store = tx.objectStore('notes');
+        for (const note of notes) {
+          store.delete(note.id);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    });
+  });
+}
+
+function saveList(list) {
+  return openDB().then((db) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('lists', 'readwrite');
+      tx.objectStore('lists').put(list);
+      tx.oncomplete = () => resolve();
+      tx.onerror = (e) => reject(e.target.error);
+    });
+  });
+}
+
+function getAllLists() {
+  return openDB().then((db) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('lists', 'readonly');
+      const request = tx.objectStore('lists').getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  });
+}
+
+function getList(id) {
+  return openDB().then((db) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('lists', 'readonly');
+      const request = tx.objectStore('lists').get(id);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = (e) => reject(e.target.error);
+    });
+  });
+}
+
+function deleteList(id) {
+  return deleteNotesByList(id).then(() => {
+    return openDB().then((db) => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('lists', 'readwrite');
+        tx.objectStore('lists').delete(id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+      });
     });
   });
 }
@@ -255,8 +417,6 @@ function stopTranscription() {
     recognition.onend = done;
     recognition.onerror = done;
 
-    // Let recognition keep listening briefly so the engine can
-    // finalize the last utterance before we cut it off.
     setTimeout(() => {
       try {
         recognition.stop();
@@ -371,9 +531,51 @@ function formatDate(isoString) {
   });
 }
 
-function createNoteCard(note) {
+function createNoteCard(note, list) {
   const card = document.createElement('div');
   card.className = 'note-card';
+  card.dataset.noteId = note.id;
+  const isAccomplish = list && list.mode === 'accomplish';
+
+  if (isAccomplish && note.completed) {
+    card.classList.add('completed');
+  }
+
+  // Accomplish mode: drag handle + checkbox row
+  if (isAccomplish) {
+    const row = document.createElement('div');
+    row.className = 'note-accomplish-row';
+
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'drag-handle';
+    dragHandle.textContent = '\u2261';
+    dragHandle.setAttribute('aria-label', 'Drag to reorder');
+    row.appendChild(dragHandle);
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'note-checkbox';
+    checkbox.checked = !!note.completed;
+    checkbox.setAttribute('aria-label', 'Mark as completed');
+    checkbox.addEventListener('change', async () => {
+      note.completed = checkbox.checked;
+      await saveNote(note);
+      if (checkbox.checked) {
+        card.classList.add('completed');
+      } else {
+        card.classList.remove('completed');
+      }
+    });
+    row.appendChild(checkbox);
+
+    card.appendChild(row);
+
+    // Touch drag-to-reorder on handle
+    dragHandle.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      startDrag(card, e.touches[0]);
+    }, { passive: false });
+  }
 
   // Header
   const header = document.createElement('div');
@@ -421,7 +623,7 @@ function createNoteCard(note) {
   if (note.transcription) {
     transcriptionEl.textContent = note.transcription;
   } else {
-    transcriptionEl.textContent = 'No transcription';
+    transcriptionEl.textContent = 'No transcription available';
     transcriptionEl.classList.add('note-transcription-empty');
   }
 
@@ -433,7 +635,6 @@ function createNoteCard(note) {
 
   // Play button handler
   playBtn.addEventListener('click', () => {
-    // Toggle existing playback on same card
     if (currentAudio && currentPlayBtn === playBtn) {
       if (!currentAudio.paused) {
         currentAudio.pause();
@@ -447,10 +648,8 @@ function createNoteCard(note) {
       return;
     }
 
-    // Stop any other card's playback
     stopCurrentPlayback();
 
-    // Start new playback
     const url = URL.createObjectURL(note.audioBlob);
     const audio = new Audio(url);
     audio._objectURL = url;
@@ -497,7 +696,15 @@ function createNoteCard(note) {
 
     try {
       await deleteNote(note.id);
-      await renderNotes();
+      // Remove from list noteOrder if present
+      if (currentListId) {
+        const listData = await getList(currentListId);
+        if (listData && listData.noteOrder) {
+          listData.noteOrder = listData.noteOrder.filter((nid) => nid !== note.id);
+          await saveList(listData);
+        }
+      }
+      await renderListDetail(currentListId);
     } catch (err) {
       console.error('Failed to delete note:', err);
     }
@@ -506,31 +713,368 @@ function createNoteCard(note) {
   return card;
 }
 
-async function renderNotes() {
+function createListCard(list, noteCount) {
+  const card = document.createElement('div');
+  card.className = 'list-card';
+  card.dataset.listId = list.id;
+
+  const info = document.createElement('div');
+  info.className = 'list-card-info';
+
+  const name = document.createElement('h3');
+  name.className = 'list-card-name';
+  name.textContent = list.name;
+
+  const meta = document.createElement('div');
+  meta.className = 'list-card-meta';
+
+  const modeBadge = document.createElement('span');
+  modeBadge.className = 'list-mode-badge';
+  modeBadge.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
+  modeBadge.dataset.mode = list.mode;
+
+  const count = document.createElement('span');
+  count.className = 'list-card-count';
+  count.textContent = noteCount + (noteCount === 1 ? ' note' : ' notes');
+
+  meta.appendChild(modeBadge);
+  meta.appendChild(count);
+
+  info.appendChild(name);
+  info.appendChild(meta);
+
+  const arrow = document.createElement('span');
+  arrow.className = 'list-card-arrow';
+  arrow.textContent = '\u203A';
+
+  card.appendChild(info);
+  card.appendChild(arrow);
+
+  card.addEventListener('click', () => {
+    showListDetailView(list.id);
+  });
+
+  return card;
+}
+
+async function renderLists() {
+  const lists = await getAllLists();
+  const allNotes = await getAllNotes();
+
+  // Count notes per list
+  const countMap = {};
+  for (const note of allNotes) {
+    const lid = note.listId || DEFAULT_LIST_ID;
+    countMap[lid] = (countMap[lid] || 0) + 1;
+  }
+
+  lists.sort((a, b) => {
+    // Default list always first
+    if (a.id === DEFAULT_LIST_ID) return -1;
+    if (b.id === DEFAULT_LIST_ID) return 1;
+    return (a.createdAt > b.createdAt ? 1 : a.createdAt < b.createdAt ? -1 : 0);
+  });
+
+  while (listsContainer.firstChild) {
+    listsContainer.removeChild(listsContainer.firstChild);
+  }
+
+  for (const list of lists) {
+    listsContainer.appendChild(createListCard(list, countMap[list.id] || 0));
+  }
+
+  if (lists.length === 0) {
+    listsEmptyState.classList.remove('hidden');
+  } else {
+    listsEmptyState.classList.add('hidden');
+  }
+}
+
+async function renderListDetail(listId) {
   stopCurrentPlayback();
 
-  const notes = await getAllNotes();
-  notes.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+  const list = await getList(listId);
+  if (!list) return;
 
-  while (notesList.firstChild) {
-    notesList.removeChild(notesList.firstChild);
+  listDetailName.textContent = list.name;
+  listDetailMode.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
+  listDetailMode.dataset.mode = list.mode;
+
+  const notes = await getNotesByList(listId);
+
+  // Order notes: use noteOrder if available, else by createdAt desc
+  if (list.noteOrder && list.noteOrder.length > 0) {
+    const noteMap = {};
+    for (const n of notes) noteMap[n.id] = n;
+    const ordered = [];
+    for (const nid of list.noteOrder) {
+      if (noteMap[nid]) {
+        ordered.push(noteMap[nid]);
+        delete noteMap[nid];
+      }
+    }
+    // Append any notes not in noteOrder (newly added)
+    const remaining = Object.values(noteMap);
+    remaining.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+    ordered.push(...remaining);
+    notes.length = 0;
+    notes.push(...ordered);
+  } else {
+    notes.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
+  }
+
+  while (listNotesEl.firstChild) {
+    listNotesEl.removeChild(listNotesEl.firstChild);
   }
 
   for (const note of notes) {
-    notesList.appendChild(createNoteCard(note));
+    listNotesEl.appendChild(createNoteCard(note, list));
   }
 
   if (notes.length === 0) {
-    emptyState.classList.remove('hidden');
+    listEmptyState.classList.remove('hidden');
   } else {
-    emptyState.classList.add('hidden');
+    listEmptyState.classList.add('hidden');
   }
 }
+
+// --- Drag-to-Reorder (Accomplish Mode) ---
+
+function startDrag(card, touch) {
+  const container = listNotesEl;
+  const cards = Array.from(container.querySelectorAll('.note-card'));
+  const startIndex = cards.indexOf(card);
+  if (startIndex === -1) return;
+
+  const rect = card.getBoundingClientRect();
+  const offsetY = touch.clientY - rect.top;
+
+  card.classList.add('dragging');
+  const placeholder = document.createElement('div');
+  placeholder.className = 'drag-placeholder';
+  placeholder.style.height = rect.height + 'px';
+
+  container.insertBefore(placeholder, card);
+  card.style.position = 'fixed';
+  card.style.left = rect.left + 'px';
+  card.style.top = rect.top + 'px';
+  card.style.width = rect.width + 'px';
+  card.style.zIndex = '1000';
+
+  dragState = { card, placeholder, container, offsetY, startIndex };
+
+  document.addEventListener('touchmove', onDragMove, { passive: false });
+  document.addEventListener('touchend', onDragEnd);
+}
+
+function onDragMove(e) {
+  if (!dragState) return;
+  e.preventDefault();
+
+  const touch = e.touches[0];
+  const { card, placeholder, container, offsetY } = dragState;
+
+  card.style.top = (touch.clientY - offsetY) + 'px';
+
+  // Determine new position
+  const siblings = Array.from(container.querySelectorAll('.note-card:not(.dragging)'));
+  let insertBefore = null;
+  for (const sibling of siblings) {
+    const sibRect = sibling.getBoundingClientRect();
+    const sibMid = sibRect.top + sibRect.height / 2;
+    if (touch.clientY < sibMid) {
+      insertBefore = sibling;
+      break;
+    }
+  }
+
+  if (insertBefore) {
+    container.insertBefore(placeholder, insertBefore);
+  } else {
+    container.appendChild(placeholder);
+  }
+}
+
+async function onDragEnd() {
+  if (!dragState) return;
+
+  document.removeEventListener('touchmove', onDragMove);
+  document.removeEventListener('touchend', onDragEnd);
+
+  const { card, placeholder, container } = dragState;
+
+  card.classList.remove('dragging');
+  card.style.position = '';
+  card.style.left = '';
+  card.style.top = '';
+  card.style.width = '';
+  card.style.zIndex = '';
+
+  container.insertBefore(card, placeholder);
+  container.removeChild(placeholder);
+
+  dragState = null;
+
+  // Save new order
+  const newOrder = Array.from(container.querySelectorAll('.note-card')).map((c) => c.dataset.noteId);
+  if (currentListId) {
+    try {
+      const list = await getList(currentListId);
+      if (list) {
+        list.noteOrder = newOrder;
+        await saveList(list);
+      }
+    } catch (err) {
+      console.error('Failed to save reorder:', err);
+    }
+  }
+}
+
+// --- View Navigation ---
+
+function showListsView() {
+  stopCurrentPlayback();
+  currentListId = null;
+  listsView.classList.remove('hidden');
+  listDetailView.classList.add('hidden');
+  backBtn.classList.add('hidden');
+  renderLists();
+}
+
+function showListDetailView(listId) {
+  currentListId = listId;
+  listsView.classList.add('hidden');
+  listDetailView.classList.remove('hidden');
+  backBtn.classList.remove('hidden');
+  recordHint.textContent = 'Tap to record';
+  renderListDetail(listId);
+}
+
+backBtn.addEventListener('click', showListsView);
+
+// --- List Modal ---
+
+function openListModal(listId) {
+  editingListId = listId || null;
+  selectedMode = 'capture';
+
+  if (editingListId) {
+    listModalTitle.textContent = 'Rename List';
+    getList(editingListId).then((list) => {
+      if (list) {
+        listNameInput.value = list.name;
+        selectedMode = list.mode;
+        updateModeSelector();
+      }
+    });
+    // Disable mode change when editing
+    modeSelector.classList.add('hidden');
+  } else {
+    listModalTitle.textContent = 'New List';
+    listNameInput.value = '';
+    selectedMode = 'capture';
+    modeSelector.classList.remove('hidden');
+    updateModeSelector();
+  }
+
+  modeDescription.textContent = MODE_DESCRIPTIONS[selectedMode];
+  listModal.classList.remove('hidden');
+  listNameInput.focus();
+}
+
+function closeListModal() {
+  listModal.classList.add('hidden');
+  editingListId = null;
+  listNameInput.value = '';
+}
+
+function updateModeSelector() {
+  const buttons = modeSelector.querySelectorAll('.mode-btn');
+  buttons.forEach((btn) => {
+    if (btn.dataset.mode === selectedMode) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+  modeDescription.textContent = MODE_DESCRIPTIONS[selectedMode];
+}
+
+modeSelector.addEventListener('click', (e) => {
+  const btn = e.target.closest('.mode-btn');
+  if (!btn) return;
+  selectedMode = btn.dataset.mode;
+  updateModeSelector();
+});
+
+newListBtn.addEventListener('click', () => openListModal(null));
+modalCancelBtn.addEventListener('click', closeListModal);
+listModal.querySelector('#list-modal-backdrop').addEventListener('click', closeListModal);
+
+modalSaveBtn.addEventListener('click', async () => {
+  const name = listNameInput.value.trim();
+  if (!name) {
+    listNameInput.focus();
+    return;
+  }
+
+  try {
+    if (editingListId) {
+      const list = await getList(editingListId);
+      if (list) {
+        list.name = name;
+        await saveList(list);
+      }
+    } else {
+      const list = {
+        id: crypto.randomUUID(),
+        name: name,
+        mode: selectedMode,
+        createdAt: new Date().toISOString(),
+        noteOrder: []
+      };
+      await saveList(list);
+    }
+
+    closeListModal();
+
+    if (currentListId) {
+      await renderListDetail(currentListId);
+    } else {
+      await renderLists();
+    }
+  } catch (err) {
+    console.error('Failed to save list:', err);
+  }
+});
+
+// --- List Detail Actions ---
+
+renameListBtn.addEventListener('click', () => {
+  if (currentListId) openListModal(currentListId);
+});
+
+deleteListBtn.addEventListener('click', async () => {
+  if (!currentListId) return;
+  const list = await getList(currentListId);
+  if (!list) return;
+
+  const msg = 'Delete "' + list.name + '" and all its notes?';
+  if (!confirm(msg)) return;
+
+  try {
+    await deleteList(currentListId);
+    showListsView();
+  } catch (err) {
+    console.error('Failed to delete list:', err);
+  }
+});
 
 // --- Record Button Handler ---
 
 recordBtn.addEventListener('click', async () => {
   if (recordBusy) return;
+  if (!currentListId) return;
 
   try {
     recordBusy = true;
@@ -549,12 +1093,23 @@ recordBtn.addEventListener('click', async () => {
           audioBlob: result.blob,
           duration: result.duration,
           transcription: result.transcription || '',
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          listId: currentListId,
+          completed: false
         };
         await saveNote(note);
-        await renderNotes();
+
+        // Add to noteOrder for accomplish lists
+        const list = await getList(currentListId);
+        if (list) {
+          if (!list.noteOrder) list.noteOrder = [];
+          list.noteOrder.push(note.id);
+          await saveList(list);
+        }
+
+        await renderListDetail(currentListId);
       } else if (result) {
-        recordHint.textContent = 'Too short — hold longer';
+        recordHint.textContent = 'Too short \u2014 hold longer';
       }
     } else {
       await startRecording();
@@ -587,7 +1142,4 @@ if ('serviceWorker' in navigator) {
 
 // --- Initialization ---
 
-renderNotes().catch((err) => {
-  console.error('Failed to load notes:', err);
-  emptyState.textContent = 'Unable to load notes. Storage may be unavailable.';
-});
+showListsView();

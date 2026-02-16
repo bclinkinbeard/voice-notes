@@ -181,52 +181,20 @@ function createNoteCard(note, list) {
   }
 
   if (isAccomplish) {
-    const row = createElement('div');
-    row.className = 'note-accomplish-row';
-
     const dragHandle = createElement('span');
     dragHandle.className = 'drag-handle';
     dragHandle.textContent = '\u2261';
-    row.appendChild(dragHandle);
+    card.appendChild(dragHandle);
 
     const checkbox = createElement('input');
     checkbox.type = 'checkbox';
     checkbox.className = 'note-checkbox';
     checkbox.checked = !!note.completed;
-    row.appendChild(checkbox);
-
-    card.appendChild(row);
+    card.appendChild(checkbox);
   }
 
-  const header = createElement('div');
-  header.className = 'note-header';
-  const dateSpan = createElement('span');
-  dateSpan.className = 'note-date';
-  dateSpan.textContent = formatDate(note.createdAt);
-  const durationSpan = createElement('span');
-  durationSpan.className = 'note-duration';
-  durationSpan.textContent = formatDuration(note.duration);
-  header.appendChild(dateSpan);
-  header.appendChild(durationSpan);
-
-  const progress = createElement('div');
-  progress.className = 'note-progress';
-  const progressFill = createElement('div');
-  progressFill.className = 'note-progress-fill';
-  progress.appendChild(progressFill);
-
-  const actions = createElement('div');
-  actions.className = 'note-actions';
-  const playBtn = createElement('button');
-  playBtn.type = 'button';
-  playBtn.className = 'play-btn';
-  playBtn.textContent = 'Play';
-  const deleteBtn = createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'delete-btn';
-  deleteBtn.textContent = 'Delete';
-  actions.appendChild(playBtn);
-  actions.appendChild(deleteBtn);
+  const content = createElement('div');
+  content.className = 'note-content';
 
   const transcriptionEl = createElement('p');
   transcriptionEl.className = 'note-transcription';
@@ -236,10 +204,34 @@ function createNoteCard(note, list) {
     transcriptionEl.textContent = 'No transcription available';
     transcriptionEl.classList.add('note-transcription-empty');
   }
+  content.appendChild(transcriptionEl);
 
-  card.appendChild(header);
-  card.appendChild(progress);
-  card.appendChild(transcriptionEl);
+  const meta = createElement('div');
+  meta.className = 'note-meta';
+  meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
+  content.appendChild(meta);
+
+  const progress = createElement('div');
+  progress.className = 'note-progress';
+  const progressFill = createElement('div');
+  progressFill.className = 'note-progress-fill';
+  progress.appendChild(progressFill);
+  content.appendChild(progress);
+
+  card.appendChild(content);
+
+  const actions = createElement('div');
+  actions.className = 'note-actions';
+  const playBtn = createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'play-btn';
+  playBtn.textContent = '\u25B6';
+  const deleteBtn = createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '\u2715';
+  actions.appendChild(playBtn);
+  actions.appendChild(deleteBtn);
   card.appendChild(actions);
 
   return card;
@@ -540,9 +532,6 @@ suite('Note card — accomplish mode uncompleted');
   assert(card.classList.contains('note-card'), 'card has note-card class');
   assert(!card.classList.contains('completed'), 'not marked completed');
 
-  const accomplishRow = card.querySelector('.note-accomplish-row');
-  assert(accomplishRow !== null, 'has accomplish row');
-
   const checkbox = card.querySelector('.note-checkbox');
   assert(checkbox !== null, 'has checkbox');
   assertEqual(checkbox.checked, false, 'checkbox unchecked');
@@ -597,12 +586,14 @@ suite('Note card — legacy note (no transcription field)');
   assert(transcriptionEl.classList.contains('note-transcription-empty'), 'has empty class for legacy note');
 }
 
-suite('Note card — duration badge');
+suite('Note card — meta line shows duration and date');
 {
   const note = { id: 'test-dur', duration: 125, transcription: 'hi', createdAt: '2026-02-15T12:00:00.000Z' };
   const card = createNoteCard(note);
-  const dur = card.querySelector('.note-duration');
-  assertEqual(dur.textContent, '2:05', 'duration badge shows formatted time');
+  const meta = card.querySelector('.note-meta');
+  assert(meta !== null, 'card has meta element');
+  assert(meta.textContent.includes('2:05'), 'meta contains formatted duration');
+  assert(meta.textContent.includes('\u00B7'), 'meta contains separator');
 }
 
 suite('Note card — action buttons');
@@ -611,8 +602,8 @@ suite('Note card — action buttons');
   const card = createNoteCard(note);
   const playBtn = card.querySelector('.play-btn');
   const deleteBtn = card.querySelector('.delete-btn');
-  assertEqual(playBtn.textContent, 'Play', 'play button text');
-  assertEqual(deleteBtn.textContent, 'Delete', 'delete button text');
+  assertEqual(playBtn.textContent, '\u25B6', 'play button icon');
+  assertEqual(deleteBtn.textContent, '\u2715', 'delete button icon');
   assertEqual(playBtn.type, 'button', 'play button type attribute');
   assertEqual(deleteBtn.type, 'button', 'delete button type attribute');
 }
@@ -1108,7 +1099,7 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes('noteOrder'), 'lists have noteOrder field');
   assert(appJs.includes('note-checkbox'), 'app.js uses note-checkbox class');
   assert(appJs.includes('drag-handle'), 'app.js uses drag-handle class');
-  assert(appJs.includes('note-accomplish-row'), 'app.js uses note-accomplish-row class');
+  assert(appJs.includes('note-content'), 'app.js uses note-content class');
   assert(appJs.includes('list-card'), 'app.js uses list-card class');
   assert(appJs.includes("mode === 'accomplish'"), 'app.js checks accomplish mode');
 
@@ -1117,7 +1108,7 @@ suite('Source file integrity — lists feature');
   assert(appCss.includes('.list-mode-badge'), 'app.css defines .list-mode-badge');
   assert(appCss.includes('.note-checkbox'), 'app.css defines .note-checkbox');
   assert(appCss.includes('.drag-handle'), 'app.css defines .drag-handle');
-  assert(appCss.includes('.note-accomplish-row'), 'app.css defines .note-accomplish-row');
+  assert(appCss.includes('.note-content'), 'app.css defines .note-content');
   assert(appCss.includes('.drag-placeholder'), 'app.css defines .drag-placeholder');
   assert(appCss.includes('.note-card.completed'), 'app.css defines .note-card.completed');
   assert(appCss.includes('#list-modal'), 'app.css defines #list-modal');
@@ -1131,10 +1122,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v16'), 'index.html version is v16');
+  assert(indexHtml.includes('v17'), 'index.html version is v17');
 
   const swJs = fs.readFileSync(__dirname + '/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v16'), 'sw.js cache version is v16');
+  assert(swJs.includes('voice-notes-v17'), 'sw.js cache version is v17');
 }
 
 } // end runTests

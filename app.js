@@ -510,7 +510,7 @@ function stopCurrentPlayback() {
     URL.revokeObjectURL(currentAudio._objectURL);
   }
   if (currentPlayBtn) {
-    currentPlayBtn.textContent = 'Play';
+    currentPlayBtn.textContent = '\u25B6';
   }
   if (currentProgressFill) {
     currentProgressFill.style.width = '0%';
@@ -541,16 +541,13 @@ function createNoteCard(note, list) {
     card.classList.add('completed');
   }
 
-  // Accomplish mode: drag handle + checkbox row
+  // Accomplish mode: drag handle + checkbox (direct children for flex row)
   if (isAccomplish) {
-    const row = document.createElement('div');
-    row.className = 'note-accomplish-row';
-
     const dragHandle = document.createElement('span');
     dragHandle.className = 'drag-handle';
     dragHandle.textContent = '\u2261';
     dragHandle.setAttribute('aria-label', 'Drag to reorder');
-    row.appendChild(dragHandle);
+    card.appendChild(dragHandle);
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
@@ -566,9 +563,7 @@ function createNoteCard(note, list) {
         card.classList.remove('completed');
       }
     });
-    row.appendChild(checkbox);
-
-    card.appendChild(row);
+    card.appendChild(checkbox);
 
     // Touch drag-to-reorder on handle
     dragHandle.addEventListener('touchstart', (e) => {
@@ -577,45 +572,9 @@ function createNoteCard(note, list) {
     }, { passive: false });
   }
 
-  // Header
-  const header = document.createElement('div');
-  header.className = 'note-header';
-
-  const dateSpan = document.createElement('span');
-  dateSpan.className = 'note-date';
-  dateSpan.textContent = formatDate(note.createdAt);
-
-  const durationSpan = document.createElement('span');
-  durationSpan.className = 'note-duration';
-  durationSpan.textContent = formatDuration(note.duration);
-
-  header.appendChild(dateSpan);
-  header.appendChild(durationSpan);
-
-  // Progress bar
-  const progress = document.createElement('div');
-  progress.className = 'note-progress';
-
-  const progressFill = document.createElement('div');
-  progressFill.className = 'note-progress-fill';
-  progress.appendChild(progressFill);
-
-  // Actions
-  const actions = document.createElement('div');
-  actions.className = 'note-actions';
-
-  const playBtn = document.createElement('button');
-  playBtn.type = 'button';
-  playBtn.className = 'play-btn';
-  playBtn.textContent = 'Play';
-
-  const deleteBtn = document.createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'delete-btn';
-  deleteBtn.textContent = 'Delete';
-
-  actions.appendChild(playBtn);
-  actions.appendChild(deleteBtn);
+  // Content area
+  const content = document.createElement('div');
+  content.className = 'note-content';
 
   // Transcription
   const transcriptionEl = document.createElement('p');
@@ -626,11 +585,42 @@ function createNoteCard(note, list) {
     transcriptionEl.textContent = 'No transcription available';
     transcriptionEl.classList.add('note-transcription-empty');
   }
+  content.appendChild(transcriptionEl);
 
-  // Assemble card
-  card.appendChild(header);
-  card.appendChild(progress);
-  card.appendChild(transcriptionEl);
+  // Meta line (duration · date)
+  const meta = document.createElement('div');
+  meta.className = 'note-meta';
+  meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
+  content.appendChild(meta);
+
+  // Progress bar
+  const progress = document.createElement('div');
+  progress.className = 'note-progress';
+  const progressFill = document.createElement('div');
+  progressFill.className = 'note-progress-fill';
+  progress.appendChild(progressFill);
+  content.appendChild(progress);
+
+  card.appendChild(content);
+
+  // Action icons (right side)
+  const actions = document.createElement('div');
+  actions.className = 'note-actions';
+
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'play-btn';
+  playBtn.textContent = '\u25B6';
+  playBtn.setAttribute('aria-label', 'Play');
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '\u2715';
+  deleteBtn.setAttribute('aria-label', 'Delete');
+
+  actions.appendChild(playBtn);
+  actions.appendChild(deleteBtn);
   card.appendChild(actions);
 
   // Play button handler
@@ -638,12 +628,12 @@ function createNoteCard(note, list) {
     if (currentAudio && currentPlayBtn === playBtn) {
       if (!currentAudio.paused) {
         currentAudio.pause();
-        playBtn.textContent = 'Play';
+        playBtn.textContent = '\u25B6';
       } else {
         currentAudio.play().catch(() => {
           stopCurrentPlayback();
         });
-        playBtn.textContent = 'Pause';
+        playBtn.textContent = '\u23F8';
       }
       return;
     }
@@ -659,13 +649,13 @@ function createNoteCard(note, list) {
     currentProgressFill = progressFill;
 
     audio.play().then(() => {
-      playBtn.textContent = 'Pause';
+      playBtn.textContent = '\u23F8';
     }).catch(() => {
       URL.revokeObjectURL(url);
       currentAudio = null;
       currentPlayBtn = null;
       currentProgressFill = null;
-      playBtn.textContent = 'Play';
+      playBtn.textContent = '\u25B6';
     });
 
     audio.ontimeupdate = () => {
@@ -676,7 +666,7 @@ function createNoteCard(note, list) {
 
     audio.onended = () => {
       URL.revokeObjectURL(audio._objectURL);
-      playBtn.textContent = 'Play';
+      playBtn.textContent = '\u25B6';
       progressFill.style.width = '0%';
       if (currentAudio === audio) {
         currentAudio = null;

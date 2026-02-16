@@ -6,7 +6,7 @@ A minimal, offline-first PWA for capturing voice notes on mobile. Record thought
 
 - **Run tests:** `node tests.js`
 - **Deploy:** Copy all files to any static file server (no build step)
-- **Current version:** v16 (tracked in `index.html` `#app-version`, `sw.js` `CACHE_NAME`, and `tests.js` version assertions)
+- **Current version:** v17 (tracked in `index.html` `#app-version`, `sw.js` `CACHE_NAME`, and `tests.js` version assertions)
 
 ## Project Goals
 
@@ -108,7 +108,7 @@ The test file (`tests.js`) uses a custom lightweight harness with `suite()`, `as
 
 Strategy: **cache-first with network fallback**.
 
-- `CACHE_NAME` in `sw.js` is versioned (currently `voice-notes-v16`)
+- `CACHE_NAME` in `sw.js` is versioned (currently `voice-notes-v17`)
 - App shell assets are pre-cached on install: `./`, `app.css`, `app.js`, `manifest.json`, icons
 - Old caches are automatically cleaned up on activation
 - Audio blobs are NOT cached by the service worker (stored in IndexedDB)

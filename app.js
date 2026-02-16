@@ -1063,9 +1063,10 @@ async function onDragEnd() {
 
 async function processUnanalyzedNotes(listId) {
   try {
+    const list = await getList(listId);
+    const isAccomplish = list && list.mode === 'accomplish';
     const notes = await getNotesByList(listId);
     const needsCategories = notes.filter((n) => n.transcription && !n.categories);
-    const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
 
     // Instant: add categories to any notes missing them
     let categorized = false;
@@ -1080,18 +1081,22 @@ async function processUnanalyzedNotes(listId) {
     }
 
     // Background: run sentiment analysis on notes missing it
+    // Only for capture lists — accomplish lists don't use sentiment.
     // Skip if user is recording — avoid memory pressure from model loading
-    for (const note of needsSentiment) {
-      if (isRecording) break;
-      try {
-        const sentiment = await analyzeSentiment(note.transcription);
-        note.sentiment = sentiment;
-        await saveNote(note);
-        if (currentListId === listId && !isRecording) {
-          await renderListDetail(listId);
+    if (!isAccomplish) {
+      const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
+      for (const note of needsSentiment) {
+        if (isRecording) break;
+        try {
+          const sentiment = await analyzeSentiment(note.transcription);
+          note.sentiment = sentiment;
+          await saveNote(note);
+          if (currentListId === listId && !isRecording) {
+            await renderListDetail(listId);
+          }
+        } catch (e) {
+          // Skip notes that fail
         }
-      } catch (e) {
-        // Skip notes that fail
       }
     }
   } catch (e) {
@@ -1288,7 +1293,7 @@ recordBtn.addEventListener('click', async () => {
             sentiment: null
           };
           await saveNote(note);
-          list.noteOrder.push(note.id);
+          list.noteOrder.unshift(note.id);
           savedNotes.push(note);
         }
 
@@ -1297,24 +1302,30 @@ recordBtn.addEventListener('click', async () => {
 
         // Background sentiment analysis — runs after recording finishes
         // so model loading doesn't compete with MediaRecorder for memory.
+        // Only for capture lists — accomplish lists don't use sentiment.
         const listIdAtSave = currentListId;
-        (async () => {
-          for (const note of savedNotes) {
-            if (!note.transcription) continue;
-            try {
-              const sentiment = await analyzeSentiment(note.transcription);
-              note.sentiment = sentiment;
-              await saveNote(note);
-              if (currentListId === listIdAtSave && !isRecording) {
-                await renderListDetail(listIdAtSave);
+        if (!isAccomplish) {
+          (async () => {
+            for (const note of savedNotes) {
+              if (!note.transcription) continue;
+              try {
+                const sentiment = await analyzeSentiment(note.transcription);
+                note.sentiment = sentiment;
+                await saveNote(note);
+                if (currentListId === listIdAtSave && !isRecording) {
+                  await renderListDetail(listIdAtSave);
+                }
+              } catch (e) {
+                // Sentiment analysis failed — note still saved without it
               }
-            } catch (e) {
-              // Sentiment analysis failed — note still saved without it
             }
-          }
-          // Also process any other unanalyzed notes now that recording is done
+            // Also process any other unanalyzed notes now that recording is done
+            processUnanalyzedNotes(listIdAtSave);
+          })();
+        } else {
+          // Still run categorization for unanalyzed notes in accomplish mode
           processUnanalyzedNotes(listIdAtSave);
-        })();
+        }
       } else if (result) {
         recordHint.textContent = 'Too short \u2014 hold longer';
       }

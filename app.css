@@ -84,6 +84,54 @@ header {
   padding-top: 16px;
 }
 
+#how-to-use {
+  background: var(--surface);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  padding: 0;
+}
+
+#how-to-use summary {
+  padding: 14px 16px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#how-to-use summary::-webkit-details-marker {
+  display: none;
+}
+
+#how-to-use summary::after {
+  content: '\25B6';
+  font-size: 0.6rem;
+  transition: transform 0.2s;
+}
+
+#how-to-use[open] summary::after {
+  transform: rotate(90deg);
+}
+
+#how-to-use-content {
+  padding: 0 16px 14px;
+}
+
+#how-to-use-content p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+#how-to-use-content p:last-child {
+  margin-bottom: 0;
+}
+
 #lists-header {
   display: flex;
   justify-content: space-between;

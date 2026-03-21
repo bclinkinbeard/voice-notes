@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { buildProjection, factSignature, normalizeText, slugify, tokenizeText } from './projections.js';
 import { executeQuery, planQuery } from './query.js';
 import { createVaultInvite, decryptArtifact, decryptEnvelope, encryptArtifact, encryptEnvelope, parseVaultInvite } from './sync.js';
-import { createVaultDescriptor, EVENT_KINDS, previewLegacyMigration } from './storage.js';
+import { alignSyncStateToRelay, createVaultDescriptor, EVENT_KINDS, previewLegacyMigration } from './storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -258,6 +258,31 @@ await suite('Sync invite round-trip', () => {
   assertEqual(parsed.relayUrl, 'https://relay.example.com', 'relay url round-trips');
   assertEqual(parsed.vaultKey, 'vault-secret', 'vault key round-trips');
   assert(descriptor.vaultKey, 'vault descriptors include a vault encryption key');
+});
+
+await suite('Sync state resets when the relay URL changes', () => {
+  const current = {
+    id: 'vault:1',
+    vaultId: 'vault:1',
+    relayUrl: 'https://relay-a.example.com',
+    lastPushCursor: 'push-cursor',
+    lastPullCursor: 'pull-cursor',
+    lastArtifactPushCursor: 'artifact-push-cursor',
+    lastArtifactPullCursor: 'artifact-pull-cursor',
+    lastSyncedAt: '2026-03-20T10:00:00.000Z',
+    lastError: 'old error'
+  };
+
+  const unchanged = alignSyncStateToRelay(current, 'vault:1', 'https://relay-a.example.com');
+  assertEqual(unchanged.lastPullCursor, 'pull-cursor', 'keeps cursors for the same relay');
+
+  const reset = alignSyncStateToRelay(current, 'vault:1', 'https://relay-b.example.com');
+  assertEqual(reset.relayUrl, 'https://relay-b.example.com', 'tracks the new relay URL');
+  assertEqual(reset.lastPushCursor, '', 'clears event push cursor on relay change');
+  assertEqual(reset.lastPullCursor, '', 'clears event pull cursor on relay change');
+  assertEqual(reset.lastArtifactPushCursor, '', 'clears artifact push cursor on relay change');
+  assertEqual(reset.lastArtifactPullCursor, '', 'clears artifact pull cursor on relay change');
+  assertEqual(reset.lastSyncedAt, '', 'clears last synced timestamp on relay change');
 });
 
 await suite('Sync crypto uses vaultKey, not auth keys', async () => {

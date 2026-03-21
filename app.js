@@ -5,6 +5,7 @@ import { executeQuery } from './query.js';
 import {
   EVENT_KINDS,
   appendEvents,
+  alignSyncStateToRelay,
   createEventEnvelope,
   createVaultDescriptor,
   ensureVaultState,
@@ -842,8 +843,9 @@ async function syncActiveVault() {
   }
 
   syncStatus.textContent = 'Syncing vault...';
+  const storedSyncState = await getSyncState(state.activeVault.id);
+  const syncState = alignSyncStateToRelay(storedSyncState, state.activeVault.id, state.activeVault.relayUrl);
   try {
-    const syncState = await getSyncState(state.activeVault.id);
     const transport = createHttpSyncTransport(state.activeVault);
     const currentEvents = await getEventsByVault(state.activeVault.id);
     const currentArtifacts = await getArtifactsByVault(state.activeVault.id);
@@ -869,7 +871,7 @@ async function syncActiveVault() {
   } catch (error) {
     syncStatus.textContent = error.message || 'Sync failed.';
     await saveSyncState({
-      ...(await getSyncState(state.activeVault.id)),
+      ...syncState,
       id: state.activeVault.id,
       vaultId: state.activeVault.id,
       relayUrl: state.activeVault.relayUrl || '',
@@ -1144,12 +1146,16 @@ async function toggleRecording() {
 
 async function saveVaultSettings() {
   if (!state.activeVault) return;
+  const previousRelayUrl = String(state.activeVault.relayUrl || '').trim();
   const nextVault = {
     ...state.activeVault,
     name: vaultNameInput.value.trim() || state.activeVault.name,
     relayUrl: relayUrlInput.value.trim()
   };
   await saveVault(nextVault);
+  if (String(nextVault.relayUrl || '') !== previousRelayUrl) {
+    await saveSyncState(alignSyncStateToRelay(await getSyncState(nextVault.id), nextVault.id, nextVault.relayUrl));
+  }
   state.activeVault = nextVault;
   await refreshState();
   renderVaultSheet();
@@ -1181,9 +1187,10 @@ async function applyInvite() {
     status: 'active',
     vaultKey: invite.vaultKey,
     readKey: invite.readKey,
-    writeKey: invite.writeKey
+    writeKey: invite.writeKey || ''
   };
   await saveVault(vault);
+  await saveSyncState(alignSyncStateToRelay(await getSyncState(vault.id), vault.id, vault.relayUrl));
   state.activeVaultId = vault.id;
   await setActiveVaultId(vault.id);
   inviteInput.value = '';

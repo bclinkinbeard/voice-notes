@@ -199,6 +199,83 @@ await suite('Relay rejects bad auth, dedupes, and preserves ciphertext', async (
   });
 });
 
+await suite('Relay cursors still return late-arriving older history', async () => {
+  await withRelay(async (baseUrl) => {
+    const vault = {
+      id: 'vault:cursor',
+      relayUrl: baseUrl,
+      vaultKey: 'vault-secret',
+      readKey: 'read-secret',
+      writeKey: 'write-secret'
+    };
+    const transport = createHttpSyncTransport(vault);
+    const firstEvent = {
+      eventId: 'evt:newer',
+      vaultId: vault.id,
+      occurredAt: '2026-03-20T10:00:00.000Z',
+      recordedAt: '2026-03-20T10:00:00.000Z',
+      deviceId: 'device:1',
+      kind: 'capture.created',
+      schemaVersion: 1,
+      sourceRefs: [],
+      body: {
+        captureId: 'capture:1',
+        captureType: 'text'
+      },
+      provenance: { source: 'user' },
+      confidence: 1
+    };
+    const lateHistoryEvent = {
+      ...firstEvent,
+      eventId: 'evt:older',
+      recordedAt: '2026-03-10T10:00:00.000Z',
+      occurredAt: '2026-03-10T10:00:00.000Z',
+      body: {
+        captureId: 'capture:2',
+        captureType: 'text'
+      }
+    };
+
+    await transport.push([firstEvent], makeSyncState());
+    const firstPull = await transport.pull(makeSyncState());
+    assertDeepEqual(firstPull.events, [firstEvent], 'first pull returns the initial event');
+
+    await transport.push([lateHistoryEvent], {
+      ...makeSyncState(),
+      lastPushCursor: firstPull.cursor
+    });
+    const secondPull = await transport.pull({
+      ...makeSyncState(),
+      lastPullCursor: firstPull.cursor
+    });
+    assertDeepEqual(secondPull.events, [lateHistoryEvent], 'late-arriving older history is still visible after the cursor');
+  });
+});
+
+await suite('Empty vault sync initializes the remote relay', async () => {
+  await withRelay(async (baseUrl) => {
+    const vault = {
+      id: 'vault:empty',
+      relayUrl: baseUrl,
+      vaultKey: 'vault-secret',
+      readKey: 'read-secret',
+      writeKey: 'write-secret'
+    };
+    const transport = createHttpSyncTransport(vault);
+    const syncState = makeSyncState();
+
+    const pushResult = await transport.push([], syncState);
+    const pushArtifactResult = await transport.pushArtifacts([], syncState);
+    const pullResult = await transport.pull(syncState);
+    const pullArtifactResult = await transport.pullArtifacts(syncState);
+
+    assertEqual(pushResult.accepted, 0, 'empty event push still initializes the relay vault');
+    assertEqual(pushArtifactResult.accepted, 0, 'empty artifact push still initializes the relay vault');
+    assertDeepEqual(pullResult.events, [], 'empty vault pull succeeds after initialization');
+    assertDeepEqual(pullArtifactResult.artifacts, [], 'empty artifact pull succeeds after initialization');
+  });
+});
+
 console.log('\n========================================');
 console.log(`${passed}/${total} server tests passed`);
 console.log('========================================');

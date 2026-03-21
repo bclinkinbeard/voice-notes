@@ -413,6 +413,42 @@ export async function getSyncState(vaultId) {
   };
 }
 
+export function alignSyncStateToRelay(syncState, vaultId, relayUrl) {
+  const normalizedRelayUrl = String(relayUrl || '').trim();
+  const current = syncState || {};
+  const currentRelayUrl = String(current.relayUrl || '').trim();
+  const next = {
+    id: vaultId,
+    vaultId,
+    relayUrl: normalizedRelayUrl,
+    lastPushCursor: '',
+    lastPullCursor: '',
+    lastArtifactPushCursor: '',
+    lastArtifactPullCursor: '',
+    lastSyncedAt: '',
+    lastError: '',
+    ...current
+  };
+
+  if (currentRelayUrl !== normalizedRelayUrl) {
+    return {
+      ...next,
+      relayUrl: normalizedRelayUrl,
+      lastPushCursor: '',
+      lastPullCursor: '',
+      lastArtifactPushCursor: '',
+      lastArtifactPullCursor: '',
+      lastSyncedAt: '',
+      lastError: ''
+    };
+  }
+
+  return {
+    ...next,
+    relayUrl: normalizedRelayUrl
+  };
+}
+
 export async function saveSyncState(syncState) {
   const db = await openDB();
   const tx = db.transaction(STORE.SYNC_STATE, 'readwrite');

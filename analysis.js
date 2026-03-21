@@ -131,6 +131,7 @@ export function deriveEntryAnnotations(entry) {
     return empty;
   }
 
+  // These heuristics are projection-time hints only, not durable source-of-truth facts.
   const keywordSummary = summarizeKeywords({ ...entry, text });
 
   return {

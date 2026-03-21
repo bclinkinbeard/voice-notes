@@ -73,7 +73,7 @@ export function createVaultInvite(vaultDescriptor) {
 export function parseVaultInvite(value) {
   try {
     const decoded = decodeJson(String(value || '').trim());
-    if (!decoded || !decoded.vaultId || !decoded.vaultKey || !decoded.readKey || !decoded.writeKey) return null;
+    if (!decoded || !decoded.vaultId || !decoded.vaultKey || !decoded.readKey) return null;
     return decoded;
   } catch (error) {
     return null;
@@ -165,13 +165,6 @@ export function createHttpSyncTransport(vaultDescriptor) {
       requireSyncCapability(vaultDescriptor, { writeRequired: true });
 
       const durableEvents = (events || []).filter((event) => event && event.eventId && !isRetiredDerivedEvent(event));
-      if (durableEvents.length === 0) {
-        return {
-          cursor: syncState.lastPushCursor || '',
-          accepted: 0
-        };
-      }
-
       const encrypted = [];
       for (const event of durableEvents) {
         encrypted.push(await encryptEnvelope(vaultDescriptor.vaultKey, event));
@@ -229,13 +222,7 @@ export function createHttpSyncTransport(vaultDescriptor) {
       requireSyncCapability(vaultDescriptor, { writeRequired: true });
 
       const currentArtifacts = (artifacts || []).filter((artifact) => artifact && artifact.artifactId);
-      if (currentArtifacts.length === 0) {
-        return {
-          cursor: syncState.lastArtifactPushCursor || '',
-          accepted: 0
-        };
-      }
-
+      // This v1 path targets local/dev-sized attachments; larger production payloads will need explicit limits.
       const encrypted = [];
       for (const artifact of currentArtifacts) {
         encrypted.push(await encryptArtifact(vaultDescriptor.vaultKey, artifact));

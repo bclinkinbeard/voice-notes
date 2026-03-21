@@ -23,11 +23,10 @@ function compareOrderedRecords(a, b, timeKey, idKey) {
   return String(a[idKey] || '').localeCompare(String(b[idKey] || ''));
 }
 
-function encodeCursor(record, timeKey, idKey) {
-  if (!record) return '';
+function encodeCursor(sequence) {
+  if (!Number.isFinite(sequence) || sequence <= 0) return '';
   return toBase64Url(JSON.stringify({
-    time: record[timeKey] || '',
-    id: record[idKey] || ''
+    sequence
   }));
 }
 
@@ -35,6 +34,11 @@ function decodeCursor(cursor) {
   if (!cursor) return null;
   try {
     const decoded = JSON.parse(fromBase64Url(cursor));
+    if (Number.isFinite(decoded.sequence)) {
+      return {
+        sequence: Number(decoded.sequence)
+      };
+    }
     return {
       time: decoded.time || '',
       id: decoded.id || ''
@@ -44,16 +48,89 @@ function decodeCursor(cursor) {
   }
 }
 
-function isAfterCursor(record, cursor, timeKey, idKey) {
-  if (!cursor) return true;
-  const recordTime = Date.parse(record[timeKey] || 0) || 0;
-  const cursorTime = Date.parse(cursor.time || 0) || 0;
-  if (recordTime !== cursorTime) return recordTime > cursorTime;
-  return String(record[idKey] || '').localeCompare(String(cursor.id || '')) > 0;
+function normalizeCollection(records, timeKey, idKey) {
+  const normalized = {};
+  const entries = Object.values(records || {})
+    .map((entry) => {
+      if (!entry) return null;
+      if (entry.record) {
+        return {
+          record: entry.record,
+          sequence: Number(entry.sequence) || 0
+        };
+      }
+      return {
+        record: entry,
+        sequence: 0
+      };
+    })
+    .filter((entry) => entry && entry.record && entry.record[idKey])
+    .sort((a, b) => {
+      if (a.sequence && b.sequence) return a.sequence - b.sequence;
+      if (a.sequence) return -1;
+      if (b.sequence) return 1;
+      return compareOrderedRecords(a.record, b.record, timeKey, idKey);
+    });
+
+  let nextSequence = 1;
+  for (const entry of entries) {
+    const sequence = entry.sequence > 0 ? entry.sequence : nextSequence;
+    normalized[entry.record[idKey]] = {
+      record: entry.record,
+      sequence
+    };
+    nextSequence = Math.max(nextSequence, sequence + 1);
+  }
+
+  return {
+    records: normalized,
+    nextSequence
+  };
 }
 
-function sortRecords(records, timeKey, idKey) {
-  return Object.values(records || {}).sort((a, b) => compareOrderedRecords(a, b, timeKey, idKey));
+function normalizeVault(vault) {
+  const normalizedVault = {
+    readKey: '',
+    writeKey: '',
+    events: {},
+    artifacts: {},
+    nextEventSequence: 1,
+    nextArtifactSequence: 1,
+    ...vault
+  };
+  const normalizedEvents = normalizeCollection(normalizedVault.events, 'recordedAt', 'eventId');
+  const normalizedArtifacts = normalizeCollection(normalizedVault.artifacts, 'createdAt', 'artifactId');
+  normalizedVault.events = normalizedEvents.records;
+  normalizedVault.artifacts = normalizedArtifacts.records;
+  normalizedVault.nextEventSequence = Math.max(Number(normalizedVault.nextEventSequence) || 0, normalizedEvents.nextSequence);
+  normalizedVault.nextArtifactSequence = Math.max(Number(normalizedVault.nextArtifactSequence) || 0, normalizedArtifacts.nextSequence);
+  return normalizedVault;
+}
+
+function currentSequence(vault, sequenceKey) {
+  const nextSequence = Number(vault[sequenceKey]) || 1;
+  return Math.max(0, nextSequence - 1);
+}
+
+function resolveCursorSequence(collection, cursor, timeKey, idKey) {
+  if (!cursor) return 0;
+  if (Number.isFinite(cursor.sequence)) return cursor.sequence;
+  if (cursor.time || cursor.id) {
+    for (const entry of Object.values(collection || {})) {
+      if (!entry || !entry.record) continue;
+      if (String(entry.record[timeKey] || '') === String(cursor.time || '') && String(entry.record[idKey] || '') === String(cursor.id || '')) {
+        return Number(entry.sequence) || 0;
+      }
+    }
+  }
+  return 0;
+}
+
+function sortRecords(collection, timeKey, idKey, sinceSequence = 0) {
+  return Object.values(collection || {})
+    .filter((entry) => (Number(entry.sequence) || 0) > sinceSequence)
+    .map((entry) => entry.record)
+    .sort((a, b) => compareOrderedRecords(a, b, timeKey, idKey));
 }
 
 export class RelayStoreError extends Error {
@@ -65,6 +142,7 @@ export class RelayStoreError extends Error {
 }
 
 export function createRelayStore(filePath) {
+  // File-backed JSON keeps the relay self-contained for local/dev use and acts as the contract reference implementation.
   let loaded = false;
   let state = emptyState();
   let persistChain = Promise.resolve();
@@ -77,6 +155,11 @@ export function createRelayStore(filePath) {
       if (error.code !== 'ENOENT') throw error;
       state = emptyState();
     }
+    state = {
+      vaults: Object.fromEntries(
+        Object.entries((state && state.vaults) || {}).map(([vaultId, vault]) => [vaultId, normalizeVault(vault)])
+      )
+    };
     loaded = true;
   }
 
@@ -106,7 +189,9 @@ export function createRelayStore(filePath) {
         readKey: auth.readKey,
         writeKey: auth.writeKey,
         events: {},
-        artifacts: {}
+        artifacts: {},
+        nextEventSequence: 1,
+        nextArtifactSequence: 1
       };
       state.vaults[vaultId] = vault;
       return vault;
@@ -143,19 +228,23 @@ export function createRelayStore(filePath) {
   async function upsertRecords(vaultId, auth, collectionName, idKey, timeKey, records) {
     await ensureLoaded();
     const vault = ensureWritableVault(vaultId, auth);
+    const sequenceKey = collectionName === 'events' ? 'nextEventSequence' : 'nextArtifactSequence';
     let accepted = 0;
 
     for (const record of records || []) {
       if (!record || !record[idKey]) continue;
       if (vault[collectionName][record[idKey]]) continue;
       accepted += 1;
-      vault[collectionName][record[idKey]] = record;
+      vault[collectionName][record[idKey]] = {
+        record,
+        sequence: Number(vault[sequenceKey]) || 1
+      };
+      vault[sequenceKey] = (Number(vault[sequenceKey]) || 1) + 1;
     }
 
     await persist();
-    const ordered = sortRecords(vault[collectionName], timeKey, idKey);
     return {
-      cursor: encodeCursor(ordered[ordered.length - 1], timeKey, idKey),
+      cursor: encodeCursor(currentSequence(vault, sequenceKey)),
       accepted
     };
   }
@@ -164,13 +253,12 @@ export function createRelayStore(filePath) {
     await ensureLoaded();
     const vault = requireReadableVault(vaultId, auth);
     const cursor = decodeCursor(since);
-    const ordered = sortRecords(vault[collectionName], timeKey, idKey);
-    const records = cursor
-      ? ordered.filter((record) => isAfterCursor(record, cursor, timeKey, idKey))
-      : ordered;
+    const sequenceKey = collectionName === 'events' ? 'nextEventSequence' : 'nextArtifactSequence';
+    const sinceSequence = resolveCursorSequence(vault[collectionName], cursor, timeKey, idKey);
+    const records = sortRecords(vault[collectionName], timeKey, idKey, sinceSequence);
 
     return {
-      cursor: encodeCursor(ordered[ordered.length - 1], timeKey, idKey),
+      cursor: encodeCursor(currentSequence(vault, sequenceKey)),
       records
     };
   }

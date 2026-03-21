@@ -77,6 +77,55 @@ export function generateSecret() {
   return randomBase64Url(24);
 }
 
+function normalizeVaultDescriptor(vault) {
+  if (!vault) return null;
+  return {
+    ...vault,
+    name: String(vault.name || DEFAULT_VAULT_NAME).trim() || DEFAULT_VAULT_NAME,
+    relayUrl: String(vault.relayUrl || '').trim(),
+    status: vault.status || 'active',
+    vaultKey: vault.vaultKey || generateSecret(),
+    readKey: vault.readKey || generateSecret(),
+    writeKey: vault.writeKey || generateSecret()
+  };
+}
+
+function vaultDescriptorChanged(original, normalized) {
+  return Boolean(
+    original
+    && normalized
+    && (
+      original.name !== normalized.name
+      || String(original.relayUrl || '') !== normalized.relayUrl
+      || original.status !== normalized.status
+      || original.vaultKey !== normalized.vaultKey
+      || original.readKey !== normalized.readKey
+      || original.writeKey !== normalized.writeKey
+    )
+  );
+}
+
+async function putVaultRecord(vault, touchUpdatedAt = true) {
+  const normalized = normalizeVaultDescriptor(vault);
+  if (!normalized) return null;
+  const db = await openDB();
+  const tx = db.transaction(STORE.VAULTS, 'readwrite');
+  tx.objectStore(STORE.VAULTS).put({
+    ...normalized,
+    updatedAt: touchUpdatedAt ? new Date().toISOString() : (normalized.updatedAt || new Date().toISOString())
+  });
+  await transactionDone(tx);
+  return normalized;
+}
+
+export function isRetiredDerivedEvent(event) {
+  return Boolean(
+    event
+    && event.provenance
+    && event.provenance.actor === 'first-party-enricher'
+  );
+}
+
 export function createVaultDescriptor(name, relayUrl) {
   const now = new Date().toISOString();
   return {
@@ -86,6 +135,7 @@ export function createVaultDescriptor(name, relayUrl) {
     createdAt: now,
     updatedAt: now,
     status: 'active',
+    vaultKey: generateSecret(),
     readKey: generateSecret(),
     writeKey: generateSecret()
   };
@@ -219,7 +269,13 @@ export async function listVaults() {
   const tx = db.transaction(STORE.VAULTS, 'readonly');
   const vaults = await requestToPromise(tx.objectStore(STORE.VAULTS).getAll());
   await transactionDone(tx);
-  return vaults.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  const normalizedVaults = vaults.map((vault) => normalizeVaultDescriptor(vault));
+  for (let index = 0; index < vaults.length; index += 1) {
+    if (vaultDescriptorChanged(vaults[index], normalizedVaults[index])) {
+      await putVaultRecord(normalizedVaults[index], false);
+    }
+  }
+  return normalizedVaults.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
 
 export async function getVault(vaultId) {
@@ -227,23 +283,21 @@ export async function getVault(vaultId) {
   const tx = db.transaction(STORE.VAULTS, 'readonly');
   const vault = await requestToPromise(tx.objectStore(STORE.VAULTS).get(vaultId));
   await transactionDone(tx);
-  return vault || null;
+  const normalized = normalizeVaultDescriptor(vault);
+  if (vaultDescriptorChanged(vault, normalized)) {
+    await putVaultRecord(normalized, false);
+  }
+  return normalized || null;
 }
 
 export async function saveVault(vault) {
-  const db = await openDB();
-  const tx = db.transaction(STORE.VAULTS, 'readwrite');
-  tx.objectStore(STORE.VAULTS).put({
-    ...vault,
-    updatedAt: new Date().toISOString()
-  });
-  await transactionDone(tx);
+  await putVaultRecord(vault, true);
 }
 
 export async function appendEvents(events) {
   const byId = {};
   for (const event of events || []) {
-    if (event && event.eventId) byId[event.eventId] = event;
+    if (event && event.eventId && !isRetiredDerivedEvent(event)) byId[event.eventId] = event;
   }
   const incoming = Object.values(byId);
   if (incoming.length === 0) return 0;
@@ -286,7 +340,7 @@ export async function getEventsByVault(vaultId) {
     : store.getAll();
   const events = await requestToPromise(request);
   await transactionDone(tx);
-  return events.filter((event) => event.vaultId === vaultId);
+  return events.filter((event) => event.vaultId === vaultId && !isRetiredDerivedEvent(event));
 }
 
 export async function saveArtifacts(artifacts) {
@@ -352,6 +406,8 @@ export async function getSyncState(vaultId) {
     relayUrl: '',
     lastPushCursor: '',
     lastPullCursor: '',
+    lastArtifactPushCursor: '',
+    lastArtifactPullCursor: '',
     lastSyncedAt: '',
     lastError: ''
   };

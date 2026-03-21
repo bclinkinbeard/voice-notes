@@ -125,13 +125,17 @@ function summarizeProjects(projects) {
   return 'Current projects: ' + projects.map((project) => project.title).join(', ') + '.';
 }
 
+function getActiveRelatedEntries(entity, projection) {
+  return entity.relatedEntryIds
+    .map((entryId) => projection.entriesById[entryId])
+    .filter((entry) => entry && !entry.archived);
+}
+
 function collectWaitingOn(entity, projection) {
   const values = entity.waitingOn.slice();
   const supportingEntries = [];
 
-  for (const entryId of entity.relatedEntryIds) {
-    const entry = projection.entriesById[entryId];
-    if (!entry) continue;
+  for (const entry of getActiveRelatedEntries(entity, projection)) {
     if (entry.waitingOn.length > 0) {
       values.push(...entry.waitingOn);
       supportingEntries.push(entry);
@@ -162,15 +166,15 @@ export function executeQuery(query, projection) {
 
   if (plan.kind === 'current-projects') {
     const projects = projection.entities
-      .filter((entity) => entity.kind === 'project' && entity.status !== 'done' && entity.mergedInto === '')
+      .filter((entity) => entity.kind === 'project' && entity.status !== 'done' && entity.mergedInto === '' && getActiveRelatedEntries(entity, projection).length > 0)
       .sort((a, b) => String(b.lastSeenAt || '').localeCompare(String(a.lastSeenAt || '')));
 
     return {
       plan,
       answer: summarizeProjects(projects),
       entities: projects,
-      entries: projects.flatMap((project) => project.relatedEntryIds.map((entryId) => projection.entriesById[entryId]).filter(Boolean)).slice(0, 8),
-      citations: projects.flatMap((project) => project.relatedEntryIds.slice(0, 2).map((entryId) => ({ type: 'capture', id: entryId }))),
+      entries: unique(projects.flatMap((project) => getActiveRelatedEntries(project, projection))).slice(0, 8),
+      citations: projects.flatMap((project) => getActiveRelatedEntries(project, projection).slice(0, 2).map((entry) => ({ type: 'capture', id: entry.id }))),
       followUps: projects.slice(0, 3).map((project) => 'What are we waiting on with ' + project.title + '?')
     };
   }
@@ -192,7 +196,7 @@ export function executeQuery(query, projection) {
     const waiting = collectWaitingOn(entity, projection);
     const supportingEntries = waiting.supportingEntries.length > 0
       ? waiting.supportingEntries
-      : entity.relatedEntryIds.map((entryId) => projection.entriesById[entryId]).filter(Boolean);
+      : getActiveRelatedEntries(entity, projection);
     const answer = waiting.values.length > 0
       ? 'Waiting on ' + entity.title + ': ' + waiting.values.join('; ') + '.'
       : 'No explicit waiting-on items found for ' + entity.title + ' yet.';
@@ -214,7 +218,7 @@ export function executeQuery(query, projection) {
 
     if (entity) {
       entities = [entity];
-      entries = entity.relatedEntryIds.map((entryId) => projection.entriesById[entryId]).filter(Boolean);
+      entries = getActiveRelatedEntries(entity, projection);
     } else {
       entries = searchEntries(plan.subject, projection);
     }

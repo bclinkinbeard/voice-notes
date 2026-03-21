@@ -1,5 +1,7 @@
 'use strict';
 
+import { deriveEntryAnnotations } from './analysis.js';
+
 const TOKEN_SPLIT_RE = /[^a-z0-9]+/i;
 
 export const DEFAULT_PREDICATES = [
@@ -213,6 +215,54 @@ function valueLabel(fact, entitiesById) {
   return String(fact.value ?? '');
 }
 
+function isRetiredDerivedEvent(event) {
+  return Boolean(
+    event
+    && event.provenance
+    && event.provenance.actor === 'first-party-enricher'
+  );
+}
+
+function resolveCurrentText(entry) {
+  const textVersions = entry.textVersions.slice().sort((a, b) => comparePreference(a, b));
+  return textVersions.length > 0 ? textVersions[textVersions.length - 1].text : '';
+}
+
+function ensureDerivedEntity(entitiesById, entityId, kind, title, sourceEntryId, recordedAt) {
+  const entity = ensureEntity(entitiesById, entityId);
+  if (!entity) return null;
+  if (!entity.kind) entity.kind = kind;
+  if (!entity.title) entity.title = title;
+  if (sourceEntryId) {
+    pushUnique(entity.sourceEntryIds, sourceEntryId);
+    pushUnique(entity.relatedEntryIds, sourceEntryId);
+  }
+  if (!entity.lastSeenAt || comparePreference({
+    eventId: entityId,
+    recordedAt,
+    occurredAt: recordedAt,
+    provenance: { source: 'system' }
+  }, {
+    eventId: entityId,
+    recordedAt: entity.lastSeenAt,
+    occurredAt: entity.lastSeenAt,
+    provenance: { source: 'system' }
+  }) > 0) {
+    entity.lastSeenAt = recordedAt || entity.lastSeenAt;
+  }
+  return entity;
+}
+
+function attachDerivedSummary(entry, eventId, summaryType, text) {
+  if (!text) return;
+  entry.summaries.push({
+    eventId,
+    summaryType,
+    text,
+    citations: [{ type: 'capture', id: entry.id }]
+  });
+}
+
 export function upcastEvent(event) {
   if (!event) return event;
   if (!event.schemaVersion) {
@@ -247,6 +297,10 @@ export function buildProjection({ vault, events, artifacts }) {
   for (const event of sortedEvents) {
     if (!event || !event.kind || !event.body) {
       unknownEvents.push(event);
+      continue;
+    }
+
+    if (isRetiredDerivedEvent(event)) {
       continue;
     }
 
@@ -440,13 +494,65 @@ export function buildProjection({ vault, events, artifacts }) {
   }
 
   const entries = Object.values(entriesById);
+  for (const entry of entries) {
+    entry.text = resolveCurrentText(entry);
+  }
+
+  for (const entry of entries) {
+    const annotations = deriveEntryAnnotations(entry);
+    const derivedRecordedAt = entry.lastUpdatedAt || entry.recordedAt;
+
+    if (!entry.kind && annotations.inferredKind) {
+      entry.kind = annotations.inferredKind;
+    }
+
+    if (annotations.waitingOn) {
+      pushUnique(entry.waitingOn, annotations.waitingOn);
+    }
+
+    if (!entry.nextStep && annotations.nextStep) {
+      entry.nextStep = annotations.nextStep;
+    }
+
+    if (!entry.dueAt && annotations.dueAt) {
+      entry.dueAt = annotations.dueAt;
+    }
+
+    for (const topicTitle of annotations.topicTitles) {
+      const entityId = 'entity:topic:' + slugify(topicTitle);
+      ensureDerivedEntity(entitiesById, entityId, 'topic', topicTitle, entry.id, derivedRecordedAt);
+      pushUnique(entry.aboutIds, entityId);
+    }
+
+    const projectEntityIds = [];
+    for (const projectTitle of annotations.projectTitles) {
+      const entityId = 'entity:project:' + slugify(projectTitle);
+      const entity = ensureDerivedEntity(entitiesById, entityId, 'project', projectTitle, entry.id, derivedRecordedAt);
+      if (entity) {
+        pushUnique(projectEntityIds, entityId);
+      }
+      pushUnique(entry.aboutIds, entityId);
+    }
+
+    if (annotations.waitingOn) {
+      for (const projectEntityId of projectEntityIds) {
+        const entity = entitiesById[projectEntityId];
+        if (entity) pushUnique(entity.waitingOn, annotations.waitingOn);
+      }
+    }
+
+    attachDerivedSummary(entry, 'derived:keywords:' + entry.id, 'keywords', annotations.keywordSummary);
+    attachDerivedSummary(entry, 'derived:artifact-summary:' + entry.id, 'artifact-metadata', annotations.artifactSummary);
+    attachDerivedSummary(entry, 'derived:link-summary:' + entry.id, 'url-metadata', annotations.linkSummary);
+  }
+
   const entities = Object.values(entitiesById);
 
   for (const entity of entities) {
     for (const entryId of entity.relatedEntryIds) {
       const entry = entriesById[entryId];
       if (entry) {
-        entity.lastSeenAt = entity.lastSeenAt || entry.recordedAt;
+        entity.lastSeenAt = entity.lastSeenAt || entry.lastUpdatedAt || entry.recordedAt;
         for (const waitingOn of entity.waitingOn) {
           pushUnique(entry.waitingOn, waitingOn);
         }

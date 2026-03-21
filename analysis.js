@@ -1,6 +1,6 @@
 'use strict';
 
-import { normalizeText, slugify, titleCase, tokenizeText, unique } from './projections.js';
+import { normalizeText, titleCase, tokenizeText, unique } from './projections.js';
 
 export const TOPIC_KEYWORDS = {
   todo: ['need to', 'have to', 'should', 'must', 'remember to', 'task', 'to do', 'follow up'],
@@ -22,53 +22,6 @@ const PROJECT_PATTERNS = [
 const WAITING_PATTERN = /\bwaiting\s+(?:on|for)\s+([^.!?\n]+)/i;
 const NEXT_STEP_PATTERN = /\bnext step(?: is|:)?\s+([^.!?\n]+)/i;
 const DUE_PATTERN = /\b(?:due|by)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|next week|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)/i;
-
-function createDerivedEventId(parts) {
-  return parts.filter(Boolean).join(':').replace(/[^a-zA-Z0-9:_-]+/g, '-');
-}
-
-function makeFactEvent({ vaultId, subjectId, predicate, objectId, value, valueType, sourceEntryId, eventId, occurredAt, recordedAt }) {
-  return {
-    eventId,
-    vaultId,
-    occurredAt: occurredAt || new Date().toISOString(),
-    recordedAt: recordedAt || occurredAt || new Date().toISOString(),
-    deviceId: 'system-enricher',
-    kind: 'fact.asserted',
-    schemaVersion: 1,
-    sourceRefs: sourceEntryId ? [{ type: 'capture', id: sourceEntryId }] : [],
-    body: {
-      subjectId,
-      predicate,
-      objectId: objectId || '',
-      value,
-      valueType: valueType || (objectId ? 'entity' : 'text')
-    },
-    provenance: { source: 'model', actor: 'first-party-enricher' },
-    confidence: 0.72
-  };
-}
-
-function makeSummaryEvent({ vaultId, targetId, eventId, text, summaryType, citations, occurredAt, recordedAt }) {
-  return {
-    eventId,
-    vaultId,
-    occurredAt: occurredAt || new Date().toISOString(),
-    recordedAt: recordedAt || occurredAt || new Date().toISOString(),
-    deviceId: 'system-enricher',
-    kind: 'summary.generated',
-    schemaVersion: 1,
-    sourceRefs: citations || [],
-    body: {
-      targetId,
-      summaryType,
-      text,
-      citations: citations || []
-    },
-    provenance: { source: 'model', actor: 'first-party-enricher' },
-    confidence: 0.6
-  };
-}
 
 function matchTopics(text) {
   const lower = normalizeText(text);
@@ -116,154 +69,22 @@ function detectDueAt(text) {
   return String(match[1] || '').trim();
 }
 
-function createEntityFacts(vaultId, entityId, kind, title, sourceEntryId, occurredAt, recordedAt) {
-  return [
-    makeFactEvent({
-      vaultId,
-      subjectId: entityId,
-      predicate: 'kind',
-      value: kind,
-      valueType: 'text',
-      sourceEntryId,
-      eventId: createDerivedEventId(['derive', 'kind', entityId, kind]),
-      occurredAt,
-      recordedAt
-    }),
-    makeFactEvent({
-      vaultId,
-      subjectId: entityId,
-      predicate: 'title',
-      value: title,
-      valueType: 'text',
-      sourceEntryId,
-      eventId: createDerivedEventId(['derive', 'title', entityId, slugify(title)]),
-      occurredAt,
-      recordedAt
-    }),
-    makeFactEvent({
-      vaultId,
-      subjectId: entityId,
-      predicate: 'source_entry',
-      objectId: sourceEntryId,
-      sourceEntryId,
-      eventId: createDerivedEventId(['derive', 'source-entry', entityId, sourceEntryId]),
-      occurredAt,
-      recordedAt
-    })
-  ];
-}
-
-function createTopicEvents(vaultId, entry, topic) {
-  const entityId = 'entity:topic:' + slugify(topic);
-  return [
-    ...createEntityFacts(vaultId, entityId, 'topic', titleCase(topic), entry.id, entry.occurredAt, entry.recordedAt),
-    makeFactEvent({
-      vaultId,
-      subjectId: entry.id,
-      predicate: 'about',
-      objectId: entityId,
-      sourceEntryId: entry.id,
-      eventId: createDerivedEventId(['derive', 'about', entry.id, entityId]),
-      occurredAt: entry.occurredAt,
-      recordedAt: entry.recordedAt
-    })
-  ];
-}
-
-function createProjectEvents(vaultId, entry, projectName) {
-  const entityId = 'entity:project:' + slugify(projectName);
-  return [
-    ...createEntityFacts(vaultId, entityId, 'project', projectName, entry.id, entry.occurredAt, entry.recordedAt),
-    makeFactEvent({
-      vaultId,
-      subjectId: entry.id,
-      predicate: 'about',
-      objectId: entityId,
-      sourceEntryId: entry.id,
-      eventId: createDerivedEventId(['derive', 'about', entry.id, entityId]),
-      occurredAt: entry.occurredAt,
-      recordedAt: entry.recordedAt
-    })
-  ];
-}
-
-function createWaitingEvents(vaultId, entry, waitingOn, aboutProjectIds) {
-  const targets = aboutProjectIds.length > 0 ? aboutProjectIds : [entry.id];
-  return targets.map((subjectId) => makeFactEvent({
-    vaultId,
-    subjectId,
-      predicate: 'waiting_on',
-      value: waitingOn,
-      valueType: 'text',
-      sourceEntryId: entry.id,
-      eventId: createDerivedEventId(['derive', 'waiting-on', subjectId, slugify(waitingOn)]),
-      occurredAt: entry.occurredAt,
-      recordedAt: entry.recordedAt
-    }));
-}
-
-function createNextStepEvent(vaultId, entry, value) {
-  return makeFactEvent({
-    vaultId,
-    subjectId: entry.id,
-    predicate: 'next_step',
-    value,
-    valueType: 'text',
-    sourceEntryId: entry.id,
-    eventId: createDerivedEventId(['derive', 'next-step', entry.id, slugify(value)]),
-    occurredAt: entry.occurredAt,
-    recordedAt: entry.recordedAt
-  });
-}
-
-function createDueAtEvent(vaultId, entry, value) {
-  return makeFactEvent({
-    vaultId,
-    subjectId: entry.id,
-    predicate: 'due_at',
-    value,
-    valueType: 'text',
-    sourceEntryId: entry.id,
-    eventId: createDerivedEventId(['derive', 'due-at', entry.id, slugify(value)]),
-    occurredAt: entry.occurredAt,
-    recordedAt: entry.recordedAt
-  });
-}
-
-function createFileMetadataSummary(vaultId, entry) {
-  const fileArtifacts = entry.artifacts.filter((artifact) => artifact.kind === 'file' || artifact.kind === 'photo');
+function createFileMetadataSummary(artifacts) {
+  const fileArtifacts = artifacts.filter((artifact) => artifact.kind === 'file' || artifact.kind === 'photo');
   if (fileArtifacts.length === 0) return null;
   const labels = fileArtifacts.map((artifact) => {
     const size = artifact.size ? Math.round(artifact.size / 1024) + ' KB' : 'unknown size';
     return (artifact.name || artifact.kind) + ' (' + size + ')';
   });
-  return makeSummaryEvent({
-    vaultId,
-    targetId: entry.id,
-    eventId: createDerivedEventId(['derive', 'file-summary', entry.id]),
-    summaryType: 'artifact-metadata',
-    text: 'Attached artifacts: ' + labels.join(', '),
-    citations: [{ type: 'capture', id: entry.id }],
-    occurredAt: entry.occurredAt,
-    recordedAt: entry.recordedAt
-  });
+  return 'Attached artifacts: ' + labels.join(', ');
 }
 
-function createLinkSummary(vaultId, entry) {
-  const linkArtifact = entry.artifacts.find((artifact) => artifact.kind === 'link' && artifact.url);
+function createLinkSummary(artifacts) {
+  const linkArtifact = artifacts.find((artifact) => artifact.kind === 'link' && artifact.url);
   if (!linkArtifact) return null;
   try {
     const parsed = new URL(linkArtifact.url);
-    return makeSummaryEvent({
-      vaultId,
-      targetId: entry.id,
-      eventId: createDerivedEventId(['derive', 'link-summary', entry.id]),
-      summaryType: 'url-metadata',
-      text: 'Saved link from ' + parsed.hostname + parsed.pathname,
-      citations: [{ type: 'capture', id: entry.id }],
-      occurredAt: entry.occurredAt,
-      recordedAt: entry.recordedAt
-    });
+    return 'Saved link from ' + parsed.hostname + parsed.pathname;
   } catch (error) {
     return null;
   }
@@ -291,79 +112,36 @@ function summarizeKeywords(entry) {
   return top;
 }
 
-export function runFirstPartyEnrichers({ vault, projection }) {
-  const derivedEvents = [];
-  for (const entry of projection.entries) {
-    if (entry.archived) continue;
-    if (!entry.text && entry.artifacts.length === 0) continue;
+export function deriveEntryAnnotations(entry) {
+  const artifacts = Array.isArray(entry && entry.artifacts) ? entry.artifacts : [];
+  const text = String((entry && entry.text) || '').trim();
+  const empty = {
+    inferredKind: '',
+    topicTitles: [],
+    projectTitles: [],
+    waitingOn: '',
+    nextStep: '',
+    dueAt: '',
+    keywordSummary: '',
+    artifactSummary: '',
+    linkSummary: ''
+  };
 
-    const topicMatches = matchTopics(entry.text);
-    for (const topic of topicMatches) {
-      derivedEvents.push(...createTopicEvents(vault.id, entry, topic));
-    }
-
-    const inferredKind = inferKindForEntry(entry);
-    if (inferredKind) {
-      derivedEvents.push(makeFactEvent({
-        vaultId: vault.id,
-        subjectId: entry.id,
-        predicate: 'kind',
-        value: inferredKind,
-        valueType: 'text',
-        sourceEntryId: entry.id,
-        eventId: createDerivedEventId(['derive', 'entry-kind', entry.id, inferredKind]),
-        occurredAt: entry.occurredAt,
-        recordedAt: entry.recordedAt
-      }));
-    }
-
-    const projectMatches = detectProjects(entry.text);
-    for (const projectName of projectMatches) {
-      derivedEvents.push(...createProjectEvents(vault.id, entry, projectName));
-    }
-
-    const currentAboutIds = unique(
-      entry.aboutIds.concat(
-        projectMatches.map((projectName) => 'entity:project:' + slugify(projectName))
-      )
-    );
-    const projectIds = currentAboutIds.filter((entityId) => entityId.startsWith('entity:project:'));
-
-    const waitingOn = detectWaitingOn(entry.text);
-    if (waitingOn) {
-      derivedEvents.push(...createWaitingEvents(vault.id, entry, waitingOn, projectIds));
-    }
-
-    const nextStep = detectNextStep(entry.text);
-    if (nextStep) {
-      derivedEvents.push(createNextStepEvent(vault.id, entry, nextStep));
-    }
-
-    const dueAt = detectDueAt(entry.text);
-    if (dueAt) {
-      derivedEvents.push(createDueAtEvent(vault.id, entry, dueAt));
-    }
-
-    const keywordSummary = summarizeKeywords(entry);
-    if (keywordSummary.length > 0) {
-      derivedEvents.push(makeSummaryEvent({
-        vaultId: vault.id,
-        targetId: entry.id,
-        eventId: createDerivedEventId(['derive', 'keywords', entry.id]),
-        summaryType: 'keywords',
-        text: 'Key terms: ' + keywordSummary.join(', '),
-        citations: [{ type: 'capture', id: entry.id }],
-        occurredAt: entry.occurredAt,
-        recordedAt: entry.recordedAt
-      }));
-    }
-
-    const fileSummary = createFileMetadataSummary(vault.id, entry);
-    if (fileSummary) derivedEvents.push(fileSummary);
-
-    const linkSummary = createLinkSummary(vault.id, entry);
-    if (linkSummary) derivedEvents.push(linkSummary);
+  if ((entry && entry.archived) || (!text && artifacts.length === 0)) {
+    return empty;
   }
 
-  return derivedEvents;
+  const keywordSummary = summarizeKeywords({ ...entry, text });
+
+  return {
+    inferredKind: inferKindForEntry({ ...entry, text }),
+    topicTitles: matchTopics(text).map((topic) => titleCase(topic)),
+    projectTitles: detectProjects(text),
+    waitingOn: detectWaitingOn(text),
+    nextStep: detectNextStep(text),
+    dueAt: detectDueAt(text),
+    keywordSummary: keywordSummary.length > 0 ? 'Key terms: ' + keywordSummary.join(', ') : '',
+    artifactSummary: createFileMetadataSummary(artifacts) || '',
+    linkSummary: createLinkSummary(artifacts) || ''
+  };
 }

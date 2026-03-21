@@ -1,6 +1,5 @@
 'use strict';
 
-import { runFirstPartyEnrichers } from './analysis.js';
 import { buildProjection } from './projections.js';
 import { executeQuery } from './query.js';
 import {
@@ -517,21 +516,9 @@ function renderAppShell() {
 }
 
 async function materializeVault(vault) {
-  let projection = null;
-  for (let pass = 0; pass < 4; pass += 1) {
-    const events = await getEventsByVault(vault.id);
-    const artifacts = await getArtifactsByVault(vault.id);
-    projection = buildProjection({ vault, events, artifacts });
-    const derivedEvents = runFirstPartyEnrichers({ vault, projection });
-    const inserted = await appendEvents(derivedEvents);
-    if (!inserted) {
-      await saveProjection(vault.id, projection);
-      return projection;
-    }
-  }
-  const finalEvents = await getEventsByVault(vault.id);
-  const finalArtifacts = await getArtifactsByVault(vault.id);
-  projection = buildProjection({ vault, events: finalEvents, artifacts: finalArtifacts });
+  const events = await getEventsByVault(vault.id);
+  const artifacts = await getArtifactsByVault(vault.id);
+  const projection = buildProjection({ vault, events, artifacts });
   await saveProjection(vault.id, projection);
   return projection;
 }
@@ -859,15 +846,21 @@ async function syncActiveVault() {
     const syncState = await getSyncState(state.activeVault.id);
     const transport = createHttpSyncTransport(state.activeVault);
     const currentEvents = await getEventsByVault(state.activeVault.id);
+    const currentArtifacts = await getArtifactsByVault(state.activeVault.id);
     const pushResult = await transport.push(currentEvents, syncState);
+    const pushArtifactResult = await transport.pushArtifacts(currentArtifacts, syncState);
     const pullResult = await transport.pull(syncState);
+    const pullArtifactResult = await transport.pullArtifacts(syncState);
     await appendEvents(pullResult.events || []);
+    await saveArtifacts(pullArtifactResult.artifacts || []);
     await saveSyncState({
       id: state.activeVault.id,
       vaultId: state.activeVault.id,
       relayUrl: state.activeVault.relayUrl || '',
       lastPushCursor: pushResult.cursor || syncState.lastPushCursor || '',
       lastPullCursor: pullResult.cursor || syncState.lastPullCursor || '',
+      lastArtifactPushCursor: pushArtifactResult.cursor || syncState.lastArtifactPushCursor || '',
+      lastArtifactPullCursor: pullArtifactResult.cursor || syncState.lastArtifactPullCursor || '',
       lastSyncedAt: new Date().toISOString(),
       lastError: ''
     });
@@ -1186,6 +1179,7 @@ async function applyInvite() {
     createdAt: (existing && existing.createdAt) || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     status: 'active',
+    vaultKey: invite.vaultKey,
     readKey: invite.readKey,
     writeKey: invite.writeKey
   };

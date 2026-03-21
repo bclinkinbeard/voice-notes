@@ -2,11 +2,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runFirstPartyEnrichers } from './analysis.js';
 import { buildProjection, factSignature, normalizeText, slugify, tokenizeText } from './projections.js';
 import { executeQuery, planQuery } from './query.js';
-import { createVaultInvite, parseVaultInvite } from './sync.js';
-import { EVENT_KINDS, previewLegacyMigration } from './storage.js';
+import { createVaultInvite, decryptArtifact, decryptEnvelope, encryptArtifact, encryptEnvelope, parseVaultInvite } from './sync.js';
+import { createVaultDescriptor, EVENT_KINDS, previewLegacyMigration } from './storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -54,18 +53,7 @@ function makeEvent(eventId, kind, body, options = {}) {
 }
 
 function materialize(events, artifacts = [], vault = { id: 'vault:1', name: 'Personal Vault' }) {
-  let currentEvents = events.slice();
-  for (let pass = 0; pass < 4; pass += 1) {
-    const projection = buildProjection({ vault, events: currentEvents, artifacts });
-    const derived = runFirstPartyEnrichers({ vault, projection });
-    const existingIds = new Set(currentEvents.map((event) => event.eventId));
-    const fresh = derived.filter((event) => !existingIds.has(event.eventId));
-    if (fresh.length === 0) {
-      return buildProjection({ vault, events: currentEvents, artifacts });
-    }
-    currentEvents = currentEvents.concat(fresh);
-  }
-  return buildProjection({ vault, events: currentEvents, artifacts });
+  return buildProjection({ vault, events, artifacts });
 }
 
 await suite('Projection utils', () => {
@@ -94,7 +82,7 @@ await suite('Projection building', () => {
   assertEqual(projection.entries[0].title, 'Bathroom remodel update. Waiting on the plumber estimate.', 'entry title derived from text');
   assertEqual(projection.entries[0].status, 'open', 'entry status applied from facts');
   assertEqual(projection.entitiesById['entity:project:bathroom-remodel'].title, 'Bathroom Remodel', 'entity title present');
-  assertDeepEqual(projection.entries[0].aboutIds, ['entity:project:bathroom-remodel'], 'about relation stored');
+  assert(projection.entries[0].aboutIds.includes('entity:project:bathroom-remodel'), 'about relation stored');
 });
 
 await suite('Projection retractions and preference', () => {
@@ -126,6 +114,38 @@ await suite('Enrichment pipeline', () => {
   assertEqual(projection.entries[0].nextStep, 'confirm tile samples', 'extracts next-step fact');
 });
 
+await suite('Projection-time derivation replaces stale derived state after edits', () => {
+  const events = [
+    makeEvent('evt:1', EVENT_KINDS.CAPTURE_CREATED, { captureId: 'capture:1', captureType: 'text' }),
+    makeEvent('evt:2', EVENT_KINDS.TEXT_EXTRACTED, {
+      captureId: 'capture:1',
+      mode: 'manual',
+      text: 'Bathroom remodel update. Waiting on plumber.'
+    }),
+    makeEvent('derive:waiting-on:legacy', EVENT_KINDS.FACT_ASSERTED, {
+      subjectId: 'capture:1',
+      predicate: 'waiting_on',
+      value: 'plumber',
+      valueType: 'text'
+    }, {
+      recordedAt: '2026-03-20T10:01:00.000Z',
+      provenance: { source: 'model', actor: 'first-party-enricher' },
+      confidence: 0.72
+    }),
+    makeEvent('evt:3', EVENT_KINDS.TEXT_EXTRACTED, {
+      captureId: 'capture:1',
+      mode: 'manual',
+      text: 'Bathroom remodel update. Waiting on electrician.'
+    }, {
+      recordedAt: '2026-03-20T10:05:00.000Z',
+      provenance: { source: 'user', actor: 'editor' }
+    })
+  ];
+
+  const projection = buildProjection({ vault: { id: 'vault:1', name: 'Personal Vault' }, events, artifacts: [] });
+  assertDeepEqual(projection.entries[0].waitingOn, ['electrician'], 'latest inferred waiting-on wins after edit');
+});
+
 await suite('Topic classification and query results', () => {
   const events = [
     makeEvent('evt:1', EVENT_KINDS.CAPTURE_CREATED, { captureId: 'capture:1', captureType: 'text' }),
@@ -144,6 +164,50 @@ await suite('Topic classification and query results', () => {
 
   const waitingOn = executeQuery('What are we waiting on with the bathroom remodel project?', projection);
   assert(waitingOn.answer.includes('permit approval'), 'waiting-on query summarizes blocker');
+});
+
+await suite('Archived captures stay out of Ask results', () => {
+  const events = [
+    makeEvent('evt:1', EVENT_KINDS.CAPTURE_CREATED, { captureId: 'capture:1', captureType: 'text' }),
+    makeEvent('evt:2', EVENT_KINDS.TEXT_EXTRACTED, {
+      captureId: 'capture:1',
+      mode: 'manual',
+      text: 'Bathroom remodel project update. Waiting on permit approval.'
+    }),
+    makeEvent('evt:3', EVENT_KINDS.CAPTURE_CREATED, {
+      captureId: 'capture:2',
+      captureType: 'text'
+    }, {
+      occurredAt: '2026-03-20T11:00:00.000Z',
+      recordedAt: '2026-03-20T11:00:00.000Z'
+    }),
+    makeEvent('evt:4', EVENT_KINDS.TEXT_EXTRACTED, {
+      captureId: 'capture:2',
+      mode: 'manual',
+      text: 'Bathroom remodel project update. Waiting on old tile quote.'
+    }, {
+      occurredAt: '2026-03-20T11:00:00.000Z',
+      recordedAt: '2026-03-20T11:00:00.000Z'
+    }),
+    makeEvent('evt:5', EVENT_KINDS.ENTRY_ARCHIVED, {
+      captureId: 'capture:2'
+    }, {
+      occurredAt: '2026-03-20T11:05:00.000Z',
+      recordedAt: '2026-03-20T11:05:00.000Z'
+    })
+  ];
+  const projection = materialize(events);
+
+  const currentProjects = executeQuery('What are my current projects?', projection);
+  assertEqual(currentProjects.entries.length, 1, 'current projects omits archived captures');
+  assertEqual(currentProjects.citations.length, 1, 'current projects omits archived citations');
+
+  const entriesAbout = executeQuery('Show me entries about bathroom remodel project.', projection);
+  assertEqual(entriesAbout.entries.length, 1, 'entries-about omits archived captures');
+
+  const waitingOn = executeQuery('What are we waiting on with bathroom remodel project?', projection);
+  assertEqual(waitingOn.entries.length, 1, 'waiting-on omits archived captures');
+  assert(waitingOn.answer.includes('permit approval'), 'waiting-on answer reflects active captures');
 });
 
 await suite('Query planning', () => {
@@ -178,10 +242,13 @@ await suite('Legacy migration preview', () => {
 });
 
 await suite('Sync invite round-trip', () => {
+  const descriptor = createVaultDescriptor('Shared Remodel Vault', 'https://relay.example.com');
   const invite = createVaultInvite({
+    ...descriptor,
     id: 'vault:shared',
     name: 'Shared Remodel Vault',
     relayUrl: 'https://relay.example.com',
+    vaultKey: 'vault-secret',
     readKey: 'read-secret',
     writeKey: 'write-secret'
   });
@@ -189,12 +256,50 @@ await suite('Sync invite round-trip', () => {
   assertEqual(parsed.vaultId, 'vault:shared', 'vault id round-trips');
   assertEqual(parsed.name, 'Shared Remodel Vault', 'vault name round-trips');
   assertEqual(parsed.relayUrl, 'https://relay.example.com', 'relay url round-trips');
+  assertEqual(parsed.vaultKey, 'vault-secret', 'vault key round-trips');
+  assert(descriptor.vaultKey, 'vault descriptors include a vault encryption key');
+});
+
+await suite('Sync crypto uses vaultKey, not auth keys', async () => {
+  const event = makeEvent('evt:1', EVENT_KINDS.CAPTURE_CREATED, {
+    captureId: 'capture:1',
+    captureType: 'text'
+  });
+  const encrypted = await encryptEnvelope('vault-secret', event);
+  const decrypted = await decryptEnvelope('vault-secret', encrypted);
+  assertEqual(decrypted.eventId, event.eventId, 'decrypts with the vault key');
+  assertEqual(decrypted.body.captureId, 'capture:1', 'event body round-trips through vault crypto');
+});
+
+await suite('Artifact crypto round-trips binary payloads', async () => {
+  const artifact = {
+    artifactId: 'artifact:1',
+    vaultId: 'vault:1',
+    captureId: 'capture:1',
+    kind: 'audio',
+    mimeType: 'audio/webm',
+    name: 'clip.webm',
+    size: 3,
+    createdAt: '2026-03-20T10:00:00.000Z',
+    blob: new Blob([Uint8Array.from([4, 5, 6])], { type: 'audio/webm' })
+  };
+  const encrypted = await encryptArtifact('vault-secret', artifact);
+  const decrypted = await decryptArtifact('vault-secret', encrypted);
+  assertEqual(decrypted.artifactId, artifact.artifactId, 'artifact id round-trips');
+  assertEqual(decrypted.mimeType, 'audio/webm', 'artifact metadata round-trips');
+  assertDeepEqual(
+    Array.from(new Uint8Array(await decrypted.blob.arrayBuffer())),
+    [4, 5, 6],
+    'artifact blob bytes round-trip'
+  );
 });
 
 await suite('Source integrity', () => {
   const indexHtml = readFileSync(join(__dirname, 'index.html'), 'utf8');
   const appCss = readFileSync(join(__dirname, 'app.css'), 'utf8');
   const appJs = readFileSync(join(__dirname, 'app.js'), 'utf8');
+  const packageJson = readFileSync(join(__dirname, 'package.json'), 'utf8');
+  const relayServer = readFileSync(join(__dirname, 'server', 'index.js'), 'utf8');
   const swJs = readFileSync(join(__dirname, 'public', 'sw.js'), 'utf8');
   const manifest = readFileSync(join(__dirname, 'public', 'manifest.json'), 'utf8');
 
@@ -203,8 +308,10 @@ await suite('Source integrity', () => {
   assert(indexHtml.includes('vault-sheet'), 'index includes vault sheet');
   assert(appCss.includes('#capture-actions'), 'app.css styles capture actions');
   assert(appCss.includes('.entry-card'), 'app.css styles entry cards');
-  assert(appJs.includes('runFirstPartyEnrichers'), 'app.js runs enrichers');
+  assert(!appJs.includes('runFirstPartyEnrichers'), 'app.js no longer persists first-party enrichers');
   assert(appJs.includes('createHttpSyncTransport'), 'app.js uses sync transport');
+  assert(packageJson.includes('dev:server'), 'package scripts include the relay server');
+  assert(relayServer.includes('createRelayServer'), 'relay server entrypoint exists');
   assert(swJs.includes('lifeos-capture-v24'), 'service worker cache version bumped');
   assert(swJs.includes('./storage.js'), 'service worker caches module graph');
   assert(manifest.includes('LifeOS Capture'), 'manifest renamed');

@@ -1,8 +1,13 @@
-const CACHE_NAME = 'voice-notes-v23';
+const CACHE_NAME = 'lifeos-capture-v24';
 const SHELL = [
   './',
   './app.css',
   './app.js',
+  './analysis.js',
+  './projections.js',
+  './query.js',
+  './storage.js',
+  './sync.js',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png'

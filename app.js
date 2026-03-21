@@ -1,274 +1,890 @@
 'use strict';
 
-import { categorizeNote, analyzeSentiment, preloadSentimentModel } from './analysis.js';
+import { buildProjection } from './projections.js';
+import { executeQuery } from './query.js';
+import {
+  EVENT_KINDS,
+  appendEvents,
+  alignSyncStateToRelay,
+  createEventEnvelope,
+  createVaultDescriptor,
+  ensureVaultState,
+  generateSortableId,
+  getArtifact,
+  getArtifactsByVault,
+  getEventsByVault,
+  getSyncState,
+  getVault,
+  listVaults,
+  migrateLegacyData,
+  saveArtifacts,
+  saveProjection,
+  saveSyncState,
+  saveVault,
+  setActiveVaultId
+} from './storage.js';
+import { createHttpSyncTransport, createVaultInvite, parseVaultInvite } from './sync.js';
 
-// --- Constants ---
-
-const DEFAULT_LIST_ID = 'default';
-const MODE_DESCRIPTIONS = {
-  capture: 'Record and save voice notes.',
-  accomplish: 'Track tasks with checkboxes and reordering.'
+const state = {
+  deviceId: '',
+  vaults: [],
+  activeVaultId: '',
+  activeVault: null,
+  projection: null,
+  tab: 'inbox',
+  captureMode: '',
+  queryResult: null,
+  entityId: '',
+  editingEntryId: '',
+  playback: null
 };
 
-// --- DOM References ---
-
-const backBtn = document.getElementById('back-btn');
-const listsView = document.getElementById('lists-view');
-const listsContainer = document.getElementById('lists-container');
-const listsEmptyState = document.getElementById('lists-empty-state');
-const newListBtn = document.getElementById('new-list-btn');
-const listDetailView = document.getElementById('list-detail-view');
-const listDetailName = document.getElementById('list-detail-name');
-const listDetailMode = document.getElementById('list-detail-mode');
-const renameListBtn = document.getElementById('rename-list-btn');
-const deleteListBtn = document.getElementById('delete-list-btn');
-const listNotesEl = document.getElementById('list-notes');
-const listEmptyState = document.getElementById('list-empty-state');
-const recordBtn = document.getElementById('record-btn');
-const recordHint = document.getElementById('record-hint');
+const appTitle = document.getElementById('app-title');
+const appVersion = document.getElementById('app-version');
+const vaultPill = document.getElementById('vault-pill');
+const syncBtn = document.getElementById('sync-btn');
+const settingsBtn = document.getElementById('settings-btn');
+const tabInbox = document.getElementById('tab-inbox');
+const tabAsk = document.getElementById('tab-ask');
+const inboxView = document.getElementById('inbox-view');
+const askView = document.getElementById('ask-view');
+const captureActions = document.getElementById('capture-actions');
+const capturePanel = document.getElementById('capture-panel');
+const voicePanel = document.getElementById('voice-panel');
+const textForm = document.getElementById('text-capture-form');
+const textInput = document.getElementById('text-capture-input');
+const linkForm = document.getElementById('link-capture-form');
+const linkInput = document.getElementById('link-capture-url');
+const linkNoteInput = document.getElementById('link-capture-note');
+const fileInput = document.getElementById('file-input');
+const photoInput = document.getElementById('photo-input');
+const timelineList = document.getElementById('timeline-list');
+const timelineEmpty = document.getElementById('timeline-empty');
+const activeProjectsEl = document.getElementById('active-projects');
+const activeTopicsEl = document.getElementById('active-topics');
+const askForm = document.getElementById('ask-form');
+const askInput = document.getElementById('ask-input');
+const askAnswer = document.getElementById('ask-answer');
+const askResults = document.getElementById('ask-results');
+const followUps = document.getElementById('follow-ups');
+const entityDrawer = document.getElementById('entity-drawer');
+const entityBackdrop = document.getElementById('entity-backdrop');
+const entityCloseBtn = document.getElementById('entity-close-btn');
+const entityTitle = document.getElementById('entity-title');
+const entityMeta = document.getElementById('entity-meta');
+const entityFacts = document.getElementById('entity-facts');
+const entityEntries = document.getElementById('entity-entries');
+const vaultSheet = document.getElementById('vault-sheet');
+const vaultBackdrop = document.getElementById('vault-backdrop');
+const vaultCloseBtn = document.getElementById('vault-close-btn');
+const vaultSelector = document.getElementById('vault-selector');
+const vaultNameInput = document.getElementById('vault-name-input');
+const relayUrlInput = document.getElementById('relay-url-input');
+const saveVaultBtn = document.getElementById('save-vault-btn');
+const createVaultBtn = document.getElementById('create-vault-btn');
+const generateInviteBtn = document.getElementById('generate-invite-btn');
+const inviteOutput = document.getElementById('invite-output');
+const inviteInput = document.getElementById('invite-input');
+const applyInviteBtn = document.getElementById('apply-invite-btn');
+const syncStatus = document.getElementById('sync-status');
+const editorModal = document.getElementById('editor-modal');
+const editorBackdrop = document.getElementById('editor-backdrop');
+const editorCloseBtn = document.getElementById('editor-close-btn');
+const editorInput = document.getElementById('editor-input');
+const editorSaveBtn = document.getElementById('editor-save-btn');
 const timerEl = document.getElementById('timer');
 const recorderEl = document.getElementById('recorder');
+const recordBtn = document.getElementById('record-btn');
+const recordHint = document.getElementById('record-hint');
 const waveformCanvas = document.getElementById('waveform');
 const waveformCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
-const listModal = document.getElementById('list-modal');
-const listModalTitle = document.getElementById('list-modal-title');
-const listNameInput = document.getElementById('list-name-input');
-const modeSelector = document.getElementById('mode-selector');
-const modeDescription = document.getElementById('mode-description');
-const modalCancelBtn = document.getElementById('modal-cancel-btn');
-const modalSaveBtn = document.getElementById('modal-save-btn');
-const filterBar = document.getElementById('filter-bar');
-const themePicker = document.getElementById('theme-picker');
 
-// --- State ---
+const PLAYBACK_URLS = new Map();
 
 let mediaRecorder = null;
-let audioChunks = [];
-let recordingStartTime = null;
-let timerInterval = null;
-let audioContext = null;
-let analyser = null;
-let waveformFrameId = null;
-let currentAudio = null;
-let currentPlayBtn = null;
-let currentProgressFill = null;
-let isRecording = false;
-let recordBusy = false;
 let speechRecognition = null;
 let transcriptionResult = '';
-let currentListId = null;
-let editingListId = null;
-let selectedMode = 'capture';
-let dragState = null;
-let activeFilter = 'all';
+let recordingStartTime = null;
+let timerInterval = null;
+let waveformFrameId = null;
+let audioContext = null;
+let analyser = null;
+let audioChunks = [];
+let isRecording = false;
+let recordBusy = false;
 
-// --- IndexedDB ---
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-let dbPromise = null;
-
-function openDB() {
-  if (dbPromise) return dbPromise;
-
-  dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open('voiceNotesDB', 2);
-
-    request.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      const oldVersion = e.oldVersion;
-
-      if (!db.objectStoreNames.contains('notes')) {
-        db.createObjectStore('notes', { keyPath: 'id' });
-      }
-
-      if (!db.objectStoreNames.contains('lists')) {
-        db.createObjectStore('lists', { keyPath: 'id' });
-      }
-
-      // Add listId index to notes if upgrading from v1
-      if (oldVersion < 2) {
-        const noteStore = e.target.transaction.objectStore('notes');
-        if (!noteStore.indexNames.contains('listId')) {
-          noteStore.createIndex('listId', 'listId', { unique: false });
-        }
-
-        // Create default list
-        const listStore = e.target.transaction.objectStore('lists');
-        listStore.put({
-          id: DEFAULT_LIST_ID,
-          name: 'My Notes',
-          mode: 'capture',
-          createdAt: new Date().toISOString(),
-          noteOrder: []
-        });
-      }
-    };
-
-    request.onsuccess = (e) => {
-      const db = e.target.result;
-      // Migrate existing notes to default list
-      migrateNotesToDefaultList(db).then(() => resolve(db)).catch(() => resolve(db));
-    };
-    request.onerror = (e) => {
-      dbPromise = null;
-      reject(e.target.error);
-    };
-  });
-
-  return dbPromise;
-}
-
-function migrateNotesToDefaultList(db) {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('notes', 'readwrite');
-    const store = tx.objectStore('notes');
-    const request = store.getAll();
-
-    request.onsuccess = () => {
-      const notes = request.result;
-      let migrated = 0;
-      for (const note of notes) {
-        if (!note.listId) {
-          note.listId = DEFAULT_LIST_ID;
-          if (note.completed === undefined) note.completed = false;
-          store.put(note);
-          migrated++;
-        }
-      }
-      tx.oncomplete = () => resolve(migrated);
-      tx.onerror = () => reject(tx.error);
-    };
-    request.onerror = () => reject(request.error);
+function formatDate(value) {
+  return new Date(value).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
   });
 }
-
-function saveNote(note) {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('notes', 'readwrite');
-      tx.objectStore('notes').put(note);
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e.target.error);
-    });
-  });
-}
-
-function getAllNotes() {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('notes', 'readonly');
-      const request = tx.objectStore('notes').getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = (e) => reject(e.target.error);
-    });
-  });
-}
-
-function getNotesByList(listId) {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('notes', 'readonly');
-      const store = tx.objectStore('notes');
-      if (store.indexNames.contains('listId')) {
-        const index = store.index('listId');
-        const request = index.getAll(listId);
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = (e) => reject(e.target.error);
-      } else {
-        const request = store.getAll();
-        request.onsuccess = () => resolve(request.result.filter((n) => n.listId === listId));
-        request.onerror = (e) => reject(e.target.error);
-      }
-    });
-  });
-}
-
-function deleteNote(id) {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('notes', 'readwrite');
-      tx.objectStore('notes').delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e.target.error);
-    });
-  });
-}
-
-function deleteNotesByList(listId) {
-  return getNotesByList(listId).then((notes) => {
-    return openDB().then((db) => {
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('notes', 'readwrite');
-        const store = tx.objectStore('notes');
-        for (const note of notes) {
-          store.delete(note.id);
-        }
-        tx.oncomplete = () => resolve();
-        tx.onerror = (e) => reject(e.target.error);
-      });
-    });
-  });
-}
-
-function saveList(list) {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('lists', 'readwrite');
-      tx.objectStore('lists').put(list);
-      tx.oncomplete = () => resolve();
-      tx.onerror = (e) => reject(e.target.error);
-    });
-  });
-}
-
-function getAllLists() {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('lists', 'readonly');
-      const request = tx.objectStore('lists').getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = (e) => reject(e.target.error);
-    });
-  });
-}
-
-function getList(id) {
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction('lists', 'readonly');
-      const request = tx.objectStore('lists').get(id);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = (e) => reject(e.target.error);
-    });
-  });
-}
-
-function deleteList(id) {
-  return deleteNotesByList(id).then(() => {
-    return openDB().then((db) => {
-      return new Promise((resolve, reject) => {
-        const tx = db.transaction('lists', 'readwrite');
-        tx.objectStore('lists').delete(id);
-        tx.oncomplete = () => resolve();
-        tx.onerror = (e) => reject(e.target.error);
-      });
-    });
-  });
-}
-
-// --- Timer Display ---
 
 function formatDuration(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return mins + ':' + String(secs).padStart(2, '0');
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return minutes + ':' + String(secs).padStart(2, '0');
+}
+
+function looksLikeUrl(value) {
+  return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function stripExtension(name) {
+  return String(name || '').replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ').trim();
+}
+
+function setTab(tab) {
+  state.tab = tab;
+  tabInbox.classList.toggle('active', tab === 'inbox');
+  tabAsk.classList.toggle('active', tab === 'ask');
+  inboxView.classList.toggle('hidden', tab !== 'inbox');
+  askView.classList.toggle('hidden', tab !== 'ask');
+}
+
+function setCaptureMode(mode) {
+  state.captureMode = mode || '';
+  capturePanel.classList.toggle('hidden', !mode);
+  voicePanel.classList.toggle('hidden', mode !== 'voice');
+  textForm.classList.toggle('hidden', mode !== 'text');
+  linkForm.classList.toggle('hidden', mode !== 'link');
+  for (const button of captureActions.querySelectorAll('.capture-action')) {
+    button.classList.toggle('active', button.dataset.action === mode);
+  }
+  if (mode === 'text') textInput.focus();
+  if (mode === 'link') linkInput.focus();
+}
+
+function showVaultSheet() {
+  vaultSheet.classList.remove('hidden');
+  renderVaultSheet();
+}
+
+function hideVaultSheet() {
+  vaultSheet.classList.add('hidden');
+}
+
+function showEditor(entryId) {
+  state.editingEntryId = entryId;
+  const entry = state.projection.entriesById[entryId];
+  editorInput.value = entry ? entry.text : '';
+  editorModal.classList.remove('hidden');
+  editorInput.focus();
+}
+
+function hideEditor() {
+  state.editingEntryId = '';
+  editorInput.value = '';
+  editorModal.classList.add('hidden');
+}
+
+function showEntity(entityId) {
+  state.entityId = entityId;
+  entityDrawer.classList.remove('hidden');
+  renderEntityDrawer();
+}
+
+function hideEntity() {
+  state.entityId = '';
+  entityDrawer.classList.add('hidden');
+}
+
+function stopCurrentPlayback() {
+  if (!state.playback) return;
+  state.playback.audio.pause();
+  if (state.playback.url) {
+    URL.revokeObjectURL(state.playback.url);
+  }
+  if (state.playback.button) {
+    state.playback.button.textContent = 'Play';
+  }
+  state.playback = null;
+}
+
+function clearObjectUrls() {
+  for (const url of PLAYBACK_URLS.values()) {
+    URL.revokeObjectURL(url);
+  }
+  PLAYBACK_URLS.clear();
+}
+
+function tokenPill(label, kind, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'entity-chip';
+  button.dataset.kind = kind;
+  button.textContent = label;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function renderHeadlineChips() {
+  while (activeProjectsEl.firstChild) activeProjectsEl.removeChild(activeProjectsEl.firstChild);
+  while (activeTopicsEl.firstChild) activeTopicsEl.removeChild(activeTopicsEl.firstChild);
+
+  const projects = state.projection.entities
+    .filter((entity) => entity.kind === 'project' && entity.status !== 'done' && entity.mergedInto === '')
+    .slice(0, 5);
+  const topics = state.projection.entities
+    .filter((entity) => entity.kind === 'topic')
+    .slice(0, 6);
+
+  for (const project of projects) {
+    activeProjectsEl.appendChild(tokenPill(project.title, 'project', () => showEntity(project.id)));
+  }
+
+  for (const topic of topics) {
+    activeTopicsEl.appendChild(tokenPill(topic.title, 'topic', () => showEntity(topic.id)));
+  }
+}
+
+function createArtifactBadge(artifact, entry) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'artifact-badge';
+  button.textContent = artifact.kind === 'photo' ? 'Photo' : artifact.kind === 'audio' ? 'Audio' : artifact.kind === 'link' ? 'Link' : 'File';
+  button.addEventListener('click', async () => {
+    const fullArtifact = await getArtifact(artifact.artifactId);
+    if (!fullArtifact) return;
+
+    if (artifact.kind === 'audio' && fullArtifact.blob) {
+      if (state.playback && state.playback.entryId === entry.id) {
+        stopCurrentPlayback();
+        return;
+      }
+
+      stopCurrentPlayback();
+      const url = URL.createObjectURL(fullArtifact.blob);
+      const audio = new Audio(url);
+      button.textContent = 'Pause';
+      audio.play().catch(() => {
+        URL.revokeObjectURL(url);
+        button.textContent = 'Play';
+      });
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        button.textContent = 'Play';
+        state.playback = null;
+      };
+      state.playback = { entryId: entry.id, audio, url, button };
+      return;
+    }
+
+    if ((artifact.kind === 'file' || artifact.kind === 'photo') && fullArtifact.blob) {
+      const url = URL.createObjectURL(fullArtifact.blob);
+      PLAYBACK_URLS.set(artifact.artifactId, url);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fullArtifact.name || 'artifact';
+      link.click();
+      return;
+    }
+
+    if (artifact.kind === 'link' && fullArtifact.url) {
+      window.open(fullArtifact.url, '_blank', 'noopener,noreferrer');
+    }
+  });
+  return button;
+}
+
+function createTimelineCard(entry) {
+  const card = document.createElement('article');
+  card.className = 'entry-card';
+
+  const head = document.createElement('div');
+  head.className = 'entry-card-head';
+
+  const titleWrap = document.createElement('div');
+
+  const typeLabel = document.createElement('span');
+  typeLabel.className = 'entry-type';
+  typeLabel.textContent = entry.kind || entry.captureType;
+  titleWrap.appendChild(typeLabel);
+
+  const title = document.createElement('h3');
+  title.className = 'entry-title';
+  title.textContent = entry.title;
+  titleWrap.appendChild(title);
+
+  const meta = document.createElement('p');
+  meta.className = 'entry-meta';
+  meta.textContent = formatDate(entry.recordedAt || entry.occurredAt);
+  titleWrap.appendChild(meta);
+
+  head.appendChild(titleWrap);
+
+  const actions = document.createElement('div');
+  actions.className = 'entry-actions';
+
+  if (entry.kind === 'task' || entry.status === 'open' || entry.status === 'done') {
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'ghost-btn';
+    toggleBtn.textContent = entry.status === 'done' ? 'Reopen' : 'Done';
+    toggleBtn.addEventListener('click', async () => {
+      await updateEntryStatus(entry, entry.status === 'done' ? 'open' : 'done');
+    });
+    actions.appendChild(toggleBtn);
+  }
+
+  const editBtn = document.createElement('button');
+  editBtn.type = 'button';
+  editBtn.className = 'ghost-btn';
+  editBtn.textContent = 'Edit';
+  editBtn.addEventListener('click', () => showEditor(entry.id));
+  actions.appendChild(editBtn);
+
+  const archiveBtn = document.createElement('button');
+  archiveBtn.type = 'button';
+  archiveBtn.className = 'ghost-btn accent';
+  archiveBtn.textContent = 'Archive';
+  archiveBtn.addEventListener('click', async () => {
+    await archiveEntry(entry.id);
+  });
+  actions.appendChild(archiveBtn);
+
+  head.appendChild(actions);
+  card.appendChild(head);
+
+  if (entry.text) {
+    const body = document.createElement('p');
+    body.className = 'entry-body';
+    body.textContent = entry.text;
+    card.appendChild(body);
+  }
+
+  if (entry.summaries.length > 0) {
+    const summary = document.createElement('p');
+    summary.className = 'entry-summary';
+    summary.textContent = entry.summaries[0].text;
+    card.appendChild(summary);
+  }
+
+  if (entry.artifacts.length > 0) {
+    const artifacts = document.createElement('div');
+    artifacts.className = 'entry-artifacts';
+    for (const artifact of entry.artifacts) {
+      artifacts.appendChild(createArtifactBadge(artifact, entry));
+    }
+    card.appendChild(artifacts);
+  }
+
+  const chips = document.createElement('div');
+  chips.className = 'entry-chips';
+  for (const entityId of entry.aboutIds.concat(entry.collectionIds)) {
+    const entity = state.projection.entitiesById[entityId];
+    if (!entity) continue;
+    chips.appendChild(tokenPill(entity.title, entity.kind, () => showEntity(entity.id)));
+  }
+  for (const waitingOn of entry.waitingOn) {
+    const badge = document.createElement('span');
+    badge.className = 'status-chip';
+    badge.textContent = 'Waiting on: ' + waitingOn;
+    chips.appendChild(badge);
+  }
+  if (entry.status && entry.status !== 'archived') {
+    const badge = document.createElement('span');
+    badge.className = 'status-chip';
+    badge.textContent = entry.status;
+    chips.appendChild(badge);
+  }
+  if (chips.childElementCount > 0) {
+    card.appendChild(chips);
+  }
+
+  return card;
+}
+
+function renderTimeline() {
+  clearObjectUrls();
+  stopCurrentPlayback();
+  while (timelineList.firstChild) timelineList.removeChild(timelineList.firstChild);
+  const entries = state.projection.entries.filter((entry) => !entry.archived);
+  timelineEmpty.classList.toggle('hidden', entries.length > 0);
+  for (const entry of entries) {
+    timelineList.appendChild(createTimelineCard(entry));
+  }
+}
+
+function renderAskResult() {
+  while (askResults.firstChild) askResults.removeChild(askResults.firstChild);
+  while (followUps.firstChild) followUps.removeChild(followUps.firstChild);
+
+  if (!state.queryResult) {
+    askAnswer.textContent = 'Ask about projects, blockers, or topics to pull structured views from the event log.';
+    return;
+  }
+
+  askAnswer.textContent = state.queryResult.answer;
+  for (const entity of state.queryResult.entities || []) {
+    askResults.appendChild(tokenPill(entity.title, entity.kind, () => showEntity(entity.id)));
+  }
+  for (const entry of state.queryResult.entries || []) {
+    askResults.appendChild(createTimelineCard(entry));
+  }
+  for (const followUp of state.queryResult.followUps || []) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'follow-up';
+    button.textContent = followUp;
+    button.addEventListener('click', () => {
+      askInput.value = followUp;
+      state.queryResult = executeQuery(followUp, state.projection);
+      renderAskResult();
+    });
+    followUps.appendChild(button);
+  }
+}
+
+function renderEntityDrawer() {
+  while (entityMeta.firstChild) entityMeta.removeChild(entityMeta.firstChild);
+  while (entityFacts.firstChild) entityFacts.removeChild(entityFacts.firstChild);
+  while (entityEntries.firstChild) entityEntries.removeChild(entityEntries.firstChild);
+
+  const entity = state.projection.entitiesById[state.entityId];
+  if (!entity) {
+    hideEntity();
+    return;
+  }
+
+  entityTitle.textContent = entity.title;
+
+  const kind = document.createElement('span');
+  kind.className = 'drawer-pill';
+  kind.textContent = entity.kind || 'entity';
+  entityMeta.appendChild(kind);
+
+  if (entity.status) {
+    const status = document.createElement('span');
+    status.className = 'drawer-pill';
+    status.textContent = entity.status;
+    entityMeta.appendChild(status);
+  }
+
+  for (const waitingOn of entity.waitingOn) {
+    const fact = document.createElement('p');
+    fact.className = 'drawer-copy';
+    fact.textContent = 'Waiting on: ' + waitingOn;
+    entityFacts.appendChild(fact);
+  }
+
+  if (entity.summaries.length > 0) {
+    const summary = document.createElement('p');
+    summary.className = 'drawer-copy';
+    summary.textContent = entity.summaries[0].text;
+    entityFacts.appendChild(summary);
+  }
+
+  for (const entryId of entity.relatedEntryIds) {
+    const entry = state.projection.entriesById[entryId];
+    if (entry && !entry.archived) {
+      entityEntries.appendChild(createTimelineCard(entry));
+    }
+  }
+}
+
+function renderVaultSheet() {
+  vaultSelector.replaceChildren();
+  for (const vault of state.vaults) {
+    const option = document.createElement('option');
+    option.value = vault.id;
+    option.textContent = vault.name;
+    option.selected = vault.id === state.activeVaultId;
+    vaultSelector.appendChild(option);
+  }
+  if (state.activeVault) {
+    vaultNameInput.value = state.activeVault.name || '';
+    relayUrlInput.value = state.activeVault.relayUrl || '';
+  }
+  syncStatus.textContent = state.activeVault && state.activeVault.relayUrl
+    ? 'Relay ready: ' + state.activeVault.relayUrl
+    : 'Local-only mode. Add a relay URL when you want shared-key sync.';
+}
+
+function renderAppShell() {
+  appTitle.textContent = 'LifeOS Capture';
+  appVersion.textContent = 'v24';
+  vaultPill.textContent = state.activeVault ? state.activeVault.name : 'Vault';
+  renderHeadlineChips();
+  renderTimeline();
+  renderAskResult();
+  if (state.entityId) renderEntityDrawer();
+}
+
+async function materializeVault(vault) {
+  const events = await getEventsByVault(vault.id);
+  const artifacts = await getArtifactsByVault(vault.id);
+  const projection = buildProjection({ vault, events, artifacts });
+  await saveProjection(vault.id, projection);
+  return projection;
+}
+
+async function refreshState() {
+  state.vaults = await listVaults();
+  state.activeVault = await getVault(state.activeVaultId);
+  state.projection = await materializeVault(state.activeVault);
+  if (askInput.value.trim()) {
+    state.queryResult = executeQuery(askInput.value.trim(), state.projection);
+  }
+  renderAppShell();
+}
+
+async function appendEntryEvents(events, artifacts) {
+  if (artifacts && artifacts.length > 0) {
+    await saveArtifacts(artifacts);
+  }
+  await appendEvents(events);
+  await refreshState();
+}
+
+async function createTextCapture(text) {
+  const value = String(text || '').trim();
+  if (!value) return;
+  const now = new Date().toISOString();
+  const captureId = generateSortableId('capture');
+  await appendEntryEvents([
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.CAPTURE_CREATED,
+      occurredAt: now,
+      recordedAt: now,
+      body: {
+        captureId,
+        captureType: looksLikeUrl(value) ? 'link' : 'text'
+      }
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.TEXT_EXTRACTED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        mode: 'manual',
+        text: value
+      }
+    })
+  ]);
+  textInput.value = '';
+  setCaptureMode('');
+}
+
+async function createLinkCapture(url, note) {
+  const href = String(url || '').trim();
+  if (!href) return;
+  const now = new Date().toISOString();
+  const captureId = generateSortableId('capture');
+  const artifactId = generateSortableId('artifact');
+  let label = href;
+  try {
+    const parsed = new URL(href);
+    label = parsed.hostname + parsed.pathname;
+  } catch (error) {
+    // Keep raw URL string.
+  }
+
+  const events = [
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.CAPTURE_CREATED,
+      occurredAt: now,
+      recordedAt: now,
+      body: {
+        captureId,
+        captureType: 'link'
+      }
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.ARTIFACT_ATTACHED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        artifactId,
+        artifactType: 'link'
+      }
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.TEXT_EXTRACTED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        mode: 'manual',
+        text: note ? note + '\n' + href : label
+      }
+    })
+  ];
+
+  await appendEntryEvents(events, [{
+    artifactId,
+    vaultId: state.activeVaultId,
+    captureId,
+    kind: 'link',
+    mimeType: 'text/uri-list',
+    name: label,
+    size: href.length,
+    url: href,
+    createdAt: now
+  }]);
+
+  linkInput.value = '';
+  linkNoteInput.value = '';
+  setCaptureMode('');
+}
+
+async function createFileCapture(file, kind) {
+  if (!file) return;
+  const now = new Date().toISOString();
+  const captureId = generateSortableId('capture');
+  const artifactId = generateSortableId('artifact');
+  const noteText = stripExtension(file.name);
+
+  const events = [
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.CAPTURE_CREATED,
+      occurredAt: now,
+      recordedAt: now,
+      body: {
+        captureId,
+        captureType: kind
+      }
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.ARTIFACT_ATTACHED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        artifactId,
+        artifactType: kind
+      }
+    })
+  ];
+
+  if (noteText) {
+    events.push(createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.TEXT_EXTRACTED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        mode: 'metadata',
+        text: noteText
+      }
+    }));
+  }
+
+  await appendEntryEvents(events, [{
+    artifactId,
+    vaultId: state.activeVaultId,
+    captureId,
+    kind,
+    mimeType: file.type || 'application/octet-stream',
+    name: file.name,
+    size: file.size || 0,
+    createdAt: now,
+    blob: file
+  }]);
+}
+
+async function updateEntryStatus(entry, nextStatus) {
+  const now = new Date().toISOString();
+  const events = [];
+  if (entry.status) {
+    events.push(createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.FACT_RETRACTED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: entry.id }],
+      body: {
+        subjectId: entry.id,
+        predicate: 'status',
+        value: entry.status
+      }
+    }));
+  }
+  events.push(createEventEnvelope({
+    vaultId: state.activeVaultId,
+    deviceId: state.deviceId,
+    kind: EVENT_KINDS.FACT_ASSERTED,
+    occurredAt: now,
+    recordedAt: now,
+    sourceRefs: [{ type: 'capture', id: entry.id }],
+    body: {
+      subjectId: entry.id,
+      predicate: 'kind',
+      value: entry.kind || 'task',
+      valueType: 'text'
+    }
+  }));
+  events.push(createEventEnvelope({
+    vaultId: state.activeVaultId,
+    deviceId: state.deviceId,
+    kind: EVENT_KINDS.FACT_ASSERTED,
+    occurredAt: now,
+    recordedAt: now,
+    sourceRefs: [{ type: 'capture', id: entry.id }],
+    body: {
+      subjectId: entry.id,
+      predicate: 'status',
+      value: nextStatus,
+      valueType: 'text'
+    }
+  }));
+  events.push(createEventEnvelope({
+    vaultId: state.activeVaultId,
+    deviceId: state.deviceId,
+    kind: EVENT_KINDS.USER_ACTION_RECORDED,
+    occurredAt: now,
+    recordedAt: now,
+    sourceRefs: [{ type: 'capture', id: entry.id }],
+    body: {
+      targetId: entry.id,
+      action: nextStatus === 'done' ? 'complete' : 'reopen'
+    }
+  }));
+  await appendEntryEvents(events);
+}
+
+async function archiveEntry(entryId) {
+  const now = new Date().toISOString();
+  await appendEntryEvents([
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.ENTRY_ARCHIVED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: entryId }],
+      body: {
+        captureId: entryId
+      }
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.USER_ACTION_RECORDED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: entryId }],
+      body: {
+        targetId: entryId,
+        action: 'archive'
+      }
+    })
+  ]);
+}
+
+async function saveEditorChanges() {
+  const text = editorInput.value.trim();
+  if (!state.editingEntryId || !text) return;
+  const now = new Date().toISOString();
+  await appendEntryEvents([
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.TEXT_EXTRACTED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: state.editingEntryId }],
+      provenance: { source: 'user', actor: 'editor' },
+      body: {
+        captureId: state.editingEntryId,
+        mode: 'manual',
+        text
+      }
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.USER_ACTION_RECORDED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: state.editingEntryId }],
+      body: {
+        targetId: state.editingEntryId,
+        action: 'edit-text'
+      }
+    })
+  ]);
+  hideEditor();
+}
+
+async function syncActiveVault() {
+  if (!state.activeVault || !state.activeVault.relayUrl) {
+    syncStatus.textContent = 'Add a relay URL to enable shared-key sync.';
+    return;
+  }
+
+  syncStatus.textContent = 'Syncing vault...';
+  const storedSyncState = await getSyncState(state.activeVault.id);
+  const syncState = alignSyncStateToRelay(storedSyncState, state.activeVault.id, state.activeVault.relayUrl);
+  try {
+    const transport = createHttpSyncTransport(state.activeVault);
+    const currentEvents = await getEventsByVault(state.activeVault.id);
+    const currentArtifacts = await getArtifactsByVault(state.activeVault.id);
+    const pushResult = await transport.push(currentEvents, syncState);
+    const pushArtifactResult = await transport.pushArtifacts(currentArtifacts, syncState);
+    const pullResult = await transport.pull(syncState);
+    const pullArtifactResult = await transport.pullArtifacts(syncState);
+    await appendEvents(pullResult.events || []);
+    await saveArtifacts(pullArtifactResult.artifacts || []);
+    await saveSyncState({
+      id: state.activeVault.id,
+      vaultId: state.activeVault.id,
+      relayUrl: state.activeVault.relayUrl || '',
+      lastPushCursor: pushResult.cursor || syncState.lastPushCursor || '',
+      lastPullCursor: pullResult.cursor || syncState.lastPullCursor || '',
+      lastArtifactPushCursor: pushArtifactResult.cursor || syncState.lastArtifactPushCursor || '',
+      lastArtifactPullCursor: pullArtifactResult.cursor || syncState.lastArtifactPullCursor || '',
+      lastSyncedAt: new Date().toISOString(),
+      lastError: ''
+    });
+    syncStatus.textContent = 'Synced at ' + formatDate(new Date().toISOString()) + '.';
+    await refreshState();
+  } catch (error) {
+    syncStatus.textContent = error.message || 'Sync failed.';
+    await saveSyncState({
+      ...syncState,
+      id: state.activeVault.id,
+      vaultId: state.activeVault.id,
+      relayUrl: state.activeVault.relayUrl || '',
+      lastError: error.message || 'Sync failed.'
+    });
+  }
 }
 
 function startTimer() {
   timerEl.classList.add('active');
   timerInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
-    timerEl.textContent = formatDuration(elapsed);
-  }, 1000);
+    timerEl.textContent = formatDuration((Date.now() - recordingStartTime) / 1000);
+  }, 200);
 }
 
 function stopTimer() {
@@ -278,8 +894,6 @@ function stopTimer() {
   timerEl.textContent = '0:00';
 }
 
-// --- Waveform Visualization ---
-
 function startWaveform(stream) {
   if (!waveformCtx) return;
 
@@ -288,56 +902,35 @@ function startWaveform(stream) {
   }
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 2048;
-
   const source = audioContext.createMediaStreamSource(stream);
   source.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
 
-  const bufferLength = analyser.fftSize;
-  const dataArray = new Uint8Array(bufferLength);
-  const ctx = waveformCtx;
-  const dpr = window.devicePixelRatio || 1;
-  const W = 280;
-  const H = 64;
-
-  waveformCanvas.width = W * dpr;
-  waveformCanvas.height = H * dpr;
-  ctx.scale(dpr, dpr);
-
-  const computedStyle = getComputedStyle(document.documentElement);
-  const accentColor = computedStyle.getPropertyValue('--accent').trim();
-  const waveformFillColor = computedStyle.getPropertyValue('--waveform-fill').trim() || 'rgba(26, 26, 46, 0.3)';
+  const width = 320;
+  const height = 72;
+  waveformCanvas.width = width;
+  waveformCanvas.height = height;
 
   function draw() {
     waveformFrameId = requestAnimationFrame(draw);
-    analyser.getByteTimeDomainData(dataArray);
-
-    ctx.fillStyle = waveformFillColor;
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = accentColor;
-    ctx.shadowColor = accentColor;
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-
-    const sliceWidth = W / bufferLength;
+    analyser.getByteTimeDomainData(data);
+    waveformCtx.clearRect(0, 0, width, height);
+    waveformCtx.fillStyle = 'rgba(255,255,255,0.08)';
+    waveformCtx.fillRect(0, 0, width, height);
+    waveformCtx.lineWidth = 2;
+    waveformCtx.strokeStyle = '#9ff55a';
+    waveformCtx.beginPath();
+    const sliceWidth = width / data.length;
     let x = 0;
-
-    for (let i = 0; i < bufferLength; i++) {
-      const v = dataArray[i] / 128.0;
-      const y = (v * H) / 2;
-
-      if (i === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
+    for (let i = 0; i < data.length; i += 1) {
+      const v = data[i] / 128;
+      const y = (v * height) / 2;
+      if (i === 0) waveformCtx.moveTo(x, y);
+      else waveformCtx.lineTo(x, y);
       x += sliceWidth;
     }
-
-    ctx.lineTo(W, H / 2);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    waveformCtx.lineTo(width, height / 2);
+    waveformCtx.stroke();
   }
 
   draw();
@@ -348,28 +941,13 @@ function stopWaveform() {
     cancelAnimationFrame(waveformFrameId);
     waveformFrameId = null;
   }
-  analyser = null;
   if (waveformCtx) {
     waveformCtx.clearRect(0, 0, waveformCanvas.width, waveformCanvas.height);
   }
 }
 
-// --- Speech Transcription ---
-
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-function formatTranscriptionSegment(text) {
-  if (!text) return text;
-  text = text.charAt(0).toUpperCase() + text.slice(1);
-  if (!/[.!?]$/.test(text)) {
-    text += '.';
-  }
-  return text;
-}
-
 function startTranscription() {
   if (!SpeechRecognition) return;
-
   transcriptionResult = '';
 
   function createRecognition() {
@@ -377,24 +955,18 @@ function startTranscription() {
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = navigator.language || 'en-US';
-
-    recognition.onresult = (e) => {
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          const text = e.results[i][0].transcript.trim();
-          if (text) {
-            transcriptionResult += (transcriptionResult ? ' ' : '') + text;
-          }
-        }
+    recognition.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        if (!event.results[i].isFinal) continue;
+        const text = event.results[i][0].transcript.trim();
+        if (text) transcriptionResult += (transcriptionResult ? ' ' : '') + text;
       }
     };
-
     recognition.onerror = () => {
       if (isRecording && speechRecognition === recognition) {
-        try { recognition.stop(); } catch (e) {}
+        try { recognition.stop(); } catch (error) {}
       }
     };
-
     recognition.onend = () => {
       if (isRecording && speechRecognition === recognition) {
         const restarted = createRecognition();
@@ -402,108 +974,53 @@ function startTranscription() {
         speechRecognition = restarted;
       }
     };
-
     return recognition;
   }
 
-  const recognition = createRecognition();
-  recognition.start();
-  speechRecognition = recognition;
+  speechRecognition = createRecognition();
+  speechRecognition.start();
 }
 
 function stopTranscription() {
   if (!speechRecognition) {
-    const result = transcriptionResult;
+    const text = transcriptionResult;
     transcriptionResult = '';
-    return Promise.resolve(result);
+    return Promise.resolve(text);
   }
 
   return new Promise((resolve) => {
-    function done() {
-      const result = transcriptionResult;
-      transcriptionResult = '';
-      resolve(result);
-    }
-
     const recognition = speechRecognition;
     speechRecognition = null;
-
-    recognition.onend = done;
-    recognition.onerror = done;
-
-    setTimeout(() => {
-      try {
-        recognition.stop();
-      } catch (e) {
-        done();
-      }
-    }, 1500);
+    recognition.onend = () => {
+      const text = transcriptionResult;
+      transcriptionResult = '';
+      resolve(text);
+    };
+    recognition.onerror = recognition.onend;
+    try {
+      recognition.stop();
+    } catch (error) {
+      resolve(transcriptionResult);
+      transcriptionResult = '';
+    }
   });
 }
 
-// --- Transcription Cleaning ---
-
-function cleanFillersFromTranscription(text) {
-  if (!text) return text;
-  return text.replace(/\b[Uu]mm?\b/g, '').replace(/\s{2,}/g, ' ').trim();
-}
-
-// --- Transcription Splitting ---
-
-function splitTranscriptionOnAnd(text) {
-  if (!text) return [text];
-  const parts = text.split(/\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
-  return parts.length > 0 ? parts : [text];
-}
-
-// --- Audio Recording ---
-
 async function startRecording() {
-  if (typeof MediaRecorder === 'undefined') {
-    throw new Error('Recording not supported');
-  }
-
-  audioChunks = [];
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-  try {
-    let mimeType = '';
-    const candidates = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/mp4'
-    ];
-    for (const candidate of candidates) {
-      if (MediaRecorder.isTypeSupported(candidate)) {
-        mimeType = candidate;
-        break;
-      }
+  const mimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+  let mimeType = '';
+  for (const candidate of mimeTypes) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(candidate)) {
+      mimeType = candidate;
+      break;
     }
-
-    const options = mimeType ? { mimeType } : undefined;
-    mediaRecorder = new MediaRecorder(stream, options);
-  } catch (err) {
-    stream.getTracks().forEach((t) => t.stop());
-    throw err;
   }
-
-  mediaRecorder.ondataavailable = (e) => {
-    if (e.data.size > 0) {
-      audioChunks.push(e.data);
-    }
+  mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  audioChunks = [];
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) audioChunks.push(event.data);
   };
-
-  mediaRecorder.onerror = () => {
-    isRecording = false;
-    recordBtn.classList.remove('recording');
-    recorderEl.classList.remove('recording');
-    recordHint.textContent = 'Recording error — try again';
-    mediaRecorder = null;
-    stopTimer();
-    stopWaveform();
-    stopTranscription();
-  };
-
   mediaRecorder.start(100);
   recordingStartTime = Date.now();
   startTimer();
@@ -512,887 +1029,264 @@ async function startRecording() {
 }
 
 async function stopRecording() {
-  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
-    stopTimer();
-    stopWaveform();
-    mediaRecorder = null;
-    return null;
-  }
-
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') return null;
   const recorder = mediaRecorder;
 
   const blobPromise = new Promise((resolve) => {
-    recorder.onstop = () => {
-      resolve(new Blob(audioChunks, { type: recorder.mimeType }));
-    };
+    recorder.onstop = () => resolve(new Blob(audioChunks, { type: recorder.mimeType }));
   });
 
   recorder.stop();
-
-  const [transcription, blob] = await Promise.all([
-    stopTranscription(),
-    blobPromise
-  ]);
-
+  const [blob, transcription] = await Promise.all([blobPromise, stopTranscription()]);
   const duration = Math.round((Date.now() - recordingStartTime) / 1000);
-  recorder.stream.getTracks().forEach((t) => t.stop());
-  audioChunks = [];
+  recorder.stream.getTracks().forEach((track) => track.stop());
   mediaRecorder = null;
+  audioChunks = [];
   stopTimer();
   stopWaveform();
-
-  return { blob, duration, transcription };
+  return { blob, transcription, duration };
 }
 
-// --- Playback Cleanup ---
+async function saveVoiceCapture(result) {
+  const now = new Date().toISOString();
+  const captureId = generateSortableId('capture');
+  const artifactId = generateSortableId('artifact');
 
-function stopCurrentPlayback() {
-  if (!currentAudio) return;
-  currentAudio.pause();
-  if (currentAudio._objectURL) {
-    URL.revokeObjectURL(currentAudio._objectURL);
-  }
-  if (currentPlayBtn) {
-    currentPlayBtn.textContent = '\u25B6';
-  }
-  if (currentProgressFill) {
-    currentProgressFill.style.width = '0%';
-  }
-  currentAudio = null;
-  currentPlayBtn = null;
-  currentProgressFill = null;
-}
-
-// --- UI Rendering ---
-
-function formatDate(isoString) {
-  return new Date(isoString).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit'
-  });
-}
-
-function createNoteCard(note, list) {
-  const card = document.createElement('div');
-  card.className = 'note-card';
-  card.dataset.noteId = note.id;
-  const isAccomplish = list && list.mode === 'accomplish';
-
-  if (isAccomplish && note.completed) {
-    card.classList.add('completed');
-  }
-
-  // Accomplish mode: drag handle + checkbox (direct children for flex row)
-  if (isAccomplish) {
-    const dragHandle = document.createElement('span');
-    dragHandle.className = 'drag-handle';
-    dragHandle.textContent = '\u2261';
-    dragHandle.setAttribute('aria-label', 'Drag to reorder');
-    card.appendChild(dragHandle);
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'note-checkbox';
-    checkbox.checked = !!note.completed;
-    checkbox.setAttribute('aria-label', 'Mark as completed');
-    checkbox.addEventListener('change', async () => {
-      note.completed = checkbox.checked;
-      await saveNote(note);
-      await renderListDetail(currentListId);
-    });
-    card.appendChild(checkbox);
-
-    // Touch drag-to-reorder on handle
-    dragHandle.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      startDrag(card, e.touches[0]);
-    }, { passive: false });
-  }
-
-  // Content area
-  const content = document.createElement('div');
-  content.className = 'note-content';
-
-  // Transcription
-  const transcriptionEl = document.createElement('p');
-  transcriptionEl.className = 'note-transcription';
-  if (note.transcription) {
-    transcriptionEl.textContent = note.transcription;
-  } else {
-    transcriptionEl.textContent = 'No transcription available';
-    transcriptionEl.classList.add('note-transcription-empty');
-  }
-  content.appendChild(transcriptionEl);
-
-  // Analysis tags (categories + sentiment)
-  const hasCategories = note.categories && note.categories.length > 0;
-  const hasSentiment = note.sentiment && note.sentiment.label !== 'neutral';
-  if (hasCategories || hasSentiment) {
-    const tagsEl = document.createElement('div');
-    tagsEl.className = 'note-tags';
-
-    if (hasSentiment) {
-      const sentimentTag = document.createElement('span');
-      sentimentTag.className = 'note-tag note-tag-sentiment';
-      sentimentTag.dataset.sentiment = note.sentiment.label;
-      sentimentTag.textContent = note.sentiment.label;
-      tagsEl.appendChild(sentimentTag);
-    }
-
-    if (hasCategories) {
-      for (const cat of note.categories) {
-        const tag = document.createElement('span');
-        tag.className = 'note-tag';
-        tag.textContent = cat;
-        tagsEl.appendChild(tag);
+  const events = [
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.CAPTURE_CREATED,
+      occurredAt: now,
+      recordedAt: now,
+      body: {
+        captureId,
+        captureType: 'voice'
       }
-    }
-
-    content.appendChild(tagsEl);
-  }
-
-  const hasAudio = !!note.audioBlob;
-
-  // Meta line (duration · date)
-  if (hasAudio) {
-    const meta = document.createElement('div');
-    meta.className = 'note-meta';
-    meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
-    content.appendChild(meta);
-  }
-
-  // Progress bar (only for notes with audio)
-  let progressFill = null;
-  if (hasAudio) {
-    const progress = document.createElement('div');
-    progress.className = 'note-progress';
-    progressFill = document.createElement('div');
-    progressFill.className = 'note-progress-fill';
-    progress.appendChild(progressFill);
-    content.appendChild(progress);
-  }
-
-  card.appendChild(content);
-
-  // Action icons (right side)
-  const actions = document.createElement('div');
-  actions.className = 'note-actions';
-
-  let playBtn = null;
-  if (hasAudio) {
-    playBtn = document.createElement('button');
-    playBtn.type = 'button';
-    playBtn.className = 'play-btn';
-    playBtn.textContent = '\u25B6';
-    playBtn.setAttribute('aria-label', 'Play');
-    actions.appendChild(playBtn);
-  }
-
-  const deleteBtn = document.createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'delete-btn';
-  deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
-  deleteBtn.setAttribute('aria-label', 'Delete');
-
-  actions.appendChild(deleteBtn);
-  card.appendChild(actions);
-
-  // Play button handler
-  if (playBtn) playBtn.addEventListener('click', () => {
-    if (currentAudio && currentPlayBtn === playBtn) {
-      if (!currentAudio.paused) {
-        currentAudio.pause();
-        playBtn.textContent = '\u25B6';
-      } else {
-        currentAudio.play().catch(() => {
-          stopCurrentPlayback();
-        });
-        playBtn.textContent = '\u23F8';
+    }),
+    createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.ARTIFACT_ATTACHED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        artifactId,
+        artifactType: 'audio',
+        duration: result.duration
       }
-      return;
-    }
+    })
+  ];
 
-    stopCurrentPlayback();
-
-    const url = URL.createObjectURL(note.audioBlob);
-    const audio = new Audio(url);
-    audio._objectURL = url;
-
-    currentAudio = audio;
-    currentPlayBtn = playBtn;
-    currentProgressFill = progressFill;
-
-    audio.play().then(() => {
-      playBtn.textContent = '\u23F8';
-    }).catch(() => {
-      URL.revokeObjectURL(url);
-      currentAudio = null;
-      currentPlayBtn = null;
-      currentProgressFill = null;
-      playBtn.textContent = '\u25B6';
-    });
-
-    audio.ontimeupdate = () => {
-      if (audio.duration && isFinite(audio.duration) && audio.duration > 0) {
-        progressFill.style.width = (audio.currentTime / audio.duration) * 100 + '%';
+  if (result.transcription && result.transcription.trim()) {
+    events.push(createEventEnvelope({
+      vaultId: state.activeVaultId,
+      deviceId: state.deviceId,
+      kind: EVENT_KINDS.TEXT_EXTRACTED,
+      occurredAt: now,
+      recordedAt: now,
+      sourceRefs: [{ type: 'capture', id: captureId }],
+      body: {
+        captureId,
+        mode: 'transcript',
+        text: result.transcription.trim()
       }
-    };
+    }));
+  }
 
-    audio.onended = () => {
-      URL.revokeObjectURL(audio._objectURL);
-      playBtn.textContent = '\u25B6';
-      progressFill.style.width = '0%';
-      if (currentAudio === audio) {
-        currentAudio = null;
-        currentPlayBtn = null;
-        currentProgressFill = null;
-      }
-    };
-  });
-
-  // Delete button handler
-  deleteBtn.addEventListener('click', async () => {
-    if (!confirm('Delete this note?')) return;
-
-    if (playBtn && currentPlayBtn === playBtn) {
-      stopCurrentPlayback();
-    }
-
-    try {
-      await deleteNote(note.id);
-      // Remove from list noteOrder if present
-      if (currentListId) {
-        const listData = await getList(currentListId);
-        if (listData && listData.noteOrder) {
-          listData.noteOrder = listData.noteOrder.filter((nid) => nid !== note.id);
-          await saveList(listData);
-        }
-      }
-      await renderListDetail(currentListId);
-    } catch (err) {
-      console.error('Failed to delete note:', err);
-    }
-  });
-
-  return card;
+  await appendEntryEvents(events, [{
+    artifactId,
+    vaultId: state.activeVaultId,
+    captureId,
+    kind: 'audio',
+    mimeType: result.blob.type || 'audio/webm',
+    name: 'Voice capture',
+    size: result.blob.size || 0,
+    createdAt: now,
+    blob: result.blob
+  }]);
 }
 
-function createListCard(list, noteCount) {
-  const card = document.createElement('div');
-  card.className = 'list-card';
-  card.dataset.listId = list.id;
-
-  const info = document.createElement('div');
-  info.className = 'list-card-info';
-
-  const name = document.createElement('h3');
-  name.className = 'list-card-name';
-  name.textContent = list.name;
-
-  const meta = document.createElement('div');
-  meta.className = 'list-card-meta';
-
-  const modeBadge = document.createElement('span');
-  modeBadge.className = 'list-mode-badge';
-  modeBadge.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
-  modeBadge.dataset.mode = list.mode;
-
-  const count = document.createElement('span');
-  count.className = 'list-card-count';
-  count.textContent = noteCount + (noteCount === 1 ? ' note' : ' notes');
-
-  meta.appendChild(modeBadge);
-  meta.appendChild(count);
-
-  info.appendChild(name);
-  info.appendChild(meta);
-
-  const arrow = document.createElement('span');
-  arrow.className = 'list-card-arrow';
-  arrow.textContent = '\u203A';
-
-  card.appendChild(info);
-  card.appendChild(arrow);
-
-  card.addEventListener('click', () => {
-    showListDetailView(list.id);
-  });
-
-  return card;
-}
-
-async function renderLists() {
-  const lists = await getAllLists();
-  const allNotes = await getAllNotes();
-
-  // Count notes per list
-  const countMap = {};
-  for (const note of allNotes) {
-    const lid = note.listId || DEFAULT_LIST_ID;
-    countMap[lid] = (countMap[lid] || 0) + 1;
-  }
-
-  lists.sort((a, b) => {
-    // Default list always first
-    if (a.id === DEFAULT_LIST_ID) return -1;
-    if (b.id === DEFAULT_LIST_ID) return 1;
-    return (a.createdAt > b.createdAt ? 1 : a.createdAt < b.createdAt ? -1 : 0);
-  });
-
-  while (listsContainer.firstChild) {
-    listsContainer.removeChild(listsContainer.firstChild);
-  }
-
-  for (const list of lists) {
-    listsContainer.appendChild(createListCard(list, countMap[list.id] || 0));
-  }
-
-  if (lists.length === 0) {
-    listsEmptyState.classList.remove('hidden');
-  } else {
-    listsEmptyState.classList.add('hidden');
-  }
-}
-
-function renderFilterBar(notes) {
-  const allCategories = new Set();
-  for (const note of notes) {
-    if (note.categories) {
-      for (const cat of note.categories) {
-        allCategories.add(cat);
-      }
-    }
-  }
-
-  while (filterBar.firstChild) {
-    filterBar.removeChild(filterBar.firstChild);
-  }
-
-  if (allCategories.size === 0) {
-    filterBar.classList.add('hidden');
-    return;
-  }
-
-  const allChip = document.createElement('button');
-  allChip.type = 'button';
-  allChip.className = 'filter-chip' + (activeFilter === 'all' ? ' active' : '');
-  allChip.textContent = 'All';
-  allChip.dataset.filter = 'all';
-  allChip.addEventListener('click', () => {
-    activeFilter = 'all';
-    renderListDetail(currentListId);
-  });
-  filterBar.appendChild(allChip);
-
-  for (const cat of allCategories) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'filter-chip' + (activeFilter === cat ? ' active' : '');
-    chip.textContent = cat;
-    chip.dataset.filter = cat;
-    chip.addEventListener('click', () => {
-      activeFilter = cat;
-      renderListDetail(currentListId);
-    });
-    filterBar.appendChild(chip);
-  }
-
-  filterBar.classList.remove('hidden');
-}
-
-async function renderListDetail(listId) {
-  stopCurrentPlayback();
-
-  const list = await getList(listId);
-  if (!list) return;
-
-  listDetailName.textContent = list.name;
-  listDetailMode.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
-  listDetailMode.dataset.mode = list.mode;
-
-  const notes = await getNotesByList(listId);
-
-  // Order notes: use noteOrder if available, else by createdAt desc
-  if (list.noteOrder && list.noteOrder.length > 0) {
-    const noteMap = {};
-    for (const n of notes) noteMap[n.id] = n;
-    const ordered = [];
-    for (const nid of list.noteOrder) {
-      if (noteMap[nid]) {
-        ordered.push(noteMap[nid]);
-        delete noteMap[nid];
-      }
-    }
-    // Append any notes not in noteOrder (newly added)
-    const remaining = Object.values(noteMap);
-    remaining.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
-    ordered.push(...remaining);
-    notes.length = 0;
-    notes.push(...ordered);
-  } else {
-    notes.sort((a, b) => (b.createdAt > a.createdAt ? 1 : b.createdAt < a.createdAt ? -1 : 0));
-  }
-
-  // Move completed items to the bottom (stable: preserves relative order)
-  if (list.mode === 'accomplish') {
-    const incomplete = notes.filter((n) => !n.completed);
-    const completed = notes.filter((n) => n.completed);
-    notes.length = 0;
-    notes.push(...incomplete, ...completed);
-  }
-
-  // Render filter bar
-  renderFilterBar(notes);
-
-  // Apply category filter
-  let filteredNotes = notes;
-  if (activeFilter !== 'all') {
-    filteredNotes = notes.filter((n) => n.categories && n.categories.includes(activeFilter));
-  }
-
-  while (listNotesEl.firstChild) {
-    listNotesEl.removeChild(listNotesEl.firstChild);
-  }
-
-  for (const note of filteredNotes) {
-    listNotesEl.appendChild(createNoteCard(note, list));
-  }
-
-  if (filteredNotes.length === 0) {
-    listEmptyState.classList.remove('hidden');
-  } else {
-    listEmptyState.classList.add('hidden');
-  }
-}
-
-// --- Drag-to-Reorder (Accomplish Mode) ---
-
-function startDrag(card, touch) {
-  const container = listNotesEl;
-  const cards = Array.from(container.querySelectorAll('.note-card'));
-  const startIndex = cards.indexOf(card);
-  if (startIndex === -1) return;
-
-  const rect = card.getBoundingClientRect();
-  const offsetY = touch.clientY - rect.top;
-
-  card.classList.add('dragging');
-  const placeholder = document.createElement('div');
-  placeholder.className = 'drag-placeholder';
-  placeholder.style.height = rect.height + 'px';
-
-  container.insertBefore(placeholder, card);
-  card.style.position = 'fixed';
-  card.style.left = rect.left + 'px';
-  card.style.top = rect.top + 'px';
-  card.style.width = rect.width + 'px';
-  card.style.zIndex = '1000';
-
-  dragState = { card, placeholder, container, offsetY, startIndex };
-
-  document.addEventListener('touchmove', onDragMove, { passive: false });
-  document.addEventListener('touchend', onDragEnd);
-}
-
-function onDragMove(e) {
-  if (!dragState) return;
-  e.preventDefault();
-
-  const touch = e.touches[0];
-  const { card, placeholder, container, offsetY } = dragState;
-
-  card.style.top = (touch.clientY - offsetY) + 'px';
-
-  // Determine new position
-  const siblings = Array.from(container.querySelectorAll('.note-card:not(.dragging)'));
-  let insertBefore = null;
-  for (const sibling of siblings) {
-    const sibRect = sibling.getBoundingClientRect();
-    const sibMid = sibRect.top + sibRect.height / 2;
-    if (touch.clientY < sibMid) {
-      insertBefore = sibling;
-      break;
-    }
-  }
-
-  if (insertBefore) {
-    container.insertBefore(placeholder, insertBefore);
-  } else {
-    container.appendChild(placeholder);
-  }
-}
-
-async function onDragEnd() {
-  if (!dragState) return;
-
-  document.removeEventListener('touchmove', onDragMove);
-  document.removeEventListener('touchend', onDragEnd);
-
-  const { card, placeholder, container } = dragState;
-
-  card.classList.remove('dragging');
-  card.style.position = '';
-  card.style.left = '';
-  card.style.top = '';
-  card.style.width = '';
-  card.style.zIndex = '';
-
-  container.insertBefore(card, placeholder);
-  container.removeChild(placeholder);
-
-  dragState = null;
-
-  // Save new order
-  const newOrder = Array.from(container.querySelectorAll('.note-card')).map((c) => c.dataset.noteId);
-  if (currentListId) {
-    try {
-      const list = await getList(currentListId);
-      if (list) {
-        list.noteOrder = newOrder;
-        await saveList(list);
-      }
-    } catch (err) {
-      console.error('Failed to save reorder:', err);
-    }
-  }
-}
-
-// --- Background Analysis ---
-
-async function processUnanalyzedNotes(listId) {
-  try {
-    const list = await getList(listId);
-    const isAccomplish = list && list.mode === 'accomplish';
-    const notes = await getNotesByList(listId);
-    const needsCategories = notes.filter((n) => n.transcription && !n.categories);
-
-    // Instant: add categories to any notes missing them
-    let categorized = false;
-    for (const note of needsCategories) {
-      note.categories = categorizeNote(note.transcription);
-      await saveNote(note);
-      categorized = true;
-    }
-
-    if (categorized && currentListId === listId && !isRecording) {
-      await renderListDetail(listId);
-    }
-
-    // Background: run sentiment analysis on notes missing it
-    // Only for capture lists — accomplish lists don't use sentiment.
-    // Skip if user is recording — avoid memory pressure from model loading
-    if (!isAccomplish) {
-      const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
-      for (const note of needsSentiment) {
-        if (isRecording) break;
-        try {
-          const sentiment = await analyzeSentiment(note.transcription);
-          note.sentiment = sentiment;
-          await saveNote(note);
-          if (currentListId === listId && !isRecording) {
-            await renderListDetail(listId);
-          }
-        } catch (e) {
-          // Skip notes that fail
-        }
-      }
-    }
-  } catch (e) {
-    console.error('processUnanalyzedNotes error:', e);
-  }
-}
-
-// --- View Navigation ---
-
-function showListsView() {
-  stopCurrentPlayback();
-  currentListId = null;
-  activeFilter = 'all';
-  listsView.classList.remove('hidden');
-  listDetailView.classList.add('hidden');
-  backBtn.classList.add('hidden');
-  renderLists();
-}
-
-function showListDetailView(listId) {
-  currentListId = listId;
-  activeFilter = 'all';
-  listsView.classList.add('hidden');
-  listDetailView.classList.remove('hidden');
-  backBtn.classList.remove('hidden');
-  recordHint.textContent = 'Tap to record';
-  renderListDetail(listId);
-
-  // Run lightweight keyword categorization on existing notes in background.
-  // Sentiment model loading is deferred until after first recording to avoid
-  // memory pressure while the user might be about to record.
-  processUnanalyzedNotes(listId);
-}
-
-backBtn.addEventListener('click', showListsView);
-
-// --- List Modal ---
-
-function openListModal(listId) {
-  editingListId = listId || null;
-  selectedMode = 'capture';
-
-  if (editingListId) {
-    listModalTitle.textContent = 'Rename List';
-    getList(editingListId).then((list) => {
-      if (list) {
-        listNameInput.value = list.name;
-        selectedMode = list.mode;
-        updateModeSelector();
-      }
-    });
-    // Disable mode change when editing
-    modeSelector.classList.add('hidden');
-  } else {
-    listModalTitle.textContent = 'New List';
-    listNameInput.value = '';
-    selectedMode = 'capture';
-    modeSelector.classList.remove('hidden');
-    updateModeSelector();
-  }
-
-  modeDescription.textContent = MODE_DESCRIPTIONS[selectedMode];
-  listModal.classList.remove('hidden');
-  listNameInput.focus();
-}
-
-function closeListModal() {
-  listModal.classList.add('hidden');
-  editingListId = null;
-  listNameInput.value = '';
-}
-
-function updateModeSelector() {
-  const buttons = modeSelector.querySelectorAll('.mode-btn');
-  buttons.forEach((btn) => {
-    if (btn.dataset.mode === selectedMode) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
-  modeDescription.textContent = MODE_DESCRIPTIONS[selectedMode];
-}
-
-modeSelector.addEventListener('click', (e) => {
-  const btn = e.target.closest('.mode-btn');
-  if (!btn) return;
-  selectedMode = btn.dataset.mode;
-  updateModeSelector();
-});
-
-newListBtn.addEventListener('click', () => openListModal(null));
-modalCancelBtn.addEventListener('click', closeListModal);
-listModal.querySelector('#list-modal-backdrop').addEventListener('click', closeListModal);
-
-modalSaveBtn.addEventListener('click', async () => {
-  const name = listNameInput.value.trim();
-  if (!name) {
-    listNameInput.focus();
-    return;
-  }
-
-  try {
-    if (editingListId) {
-      const list = await getList(editingListId);
-      if (list) {
-        list.name = name;
-        await saveList(list);
-      }
-    } else {
-      const list = {
-        id: crypto.randomUUID(),
-        name: name,
-        mode: selectedMode,
-        createdAt: new Date().toISOString(),
-        noteOrder: []
-      };
-      await saveList(list);
-    }
-
-    closeListModal();
-
-    if (currentListId) {
-      await renderListDetail(currentListId);
-    } else {
-      await renderLists();
-    }
-  } catch (err) {
-    console.error('Failed to save list:', err);
-  }
-});
-
-// --- List Detail Actions ---
-
-renameListBtn.addEventListener('click', () => {
-  if (currentListId) openListModal(currentListId);
-});
-
-deleteListBtn.addEventListener('click', async () => {
-  if (!currentListId) return;
-  const list = await getList(currentListId);
-  if (!list) return;
-
-  const msg = 'Delete "' + list.name + '" and all its notes?';
-  if (!confirm(msg)) return;
-
-  try {
-    await deleteList(currentListId);
-    showListsView();
-  } catch (err) {
-    console.error('Failed to delete list:', err);
-  }
-});
-
-// --- Record Button Handler ---
-
-recordBtn.addEventListener('click', async () => {
+async function toggleRecording() {
   if (recordBusy) return;
-  if (!currentListId) return;
 
   try {
     recordBusy = true;
-
     if (isRecording) {
       recordBtn.classList.remove('recording');
       recorderEl.classList.remove('recording');
       recordHint.textContent = 'Tap to record';
-
       const result = await stopRecording();
       isRecording = false;
-
       if (result && result.duration > 0) {
-        const list = await getList(currentListId);
-        const isAccomplish = list && list.mode === 'accomplish';
-        const rawTranscription = result.transcription || '';
-        const cleaned = isAccomplish ? cleanFillersFromTranscription(rawTranscription) : rawTranscription;
-        const transcription = isAccomplish ? cleaned : formatTranscriptionSegment(cleaned) || '';
-        const parts = isAccomplish ? splitTranscriptionOnAnd(transcription) : [transcription];
-        const now = new Date().toISOString();
-
-        if (!list.noteOrder) list.noteOrder = [];
-
-        const savedNotes = [];
-        for (let i = 0; i < parts.length; i++) {
-          const note = {
-            id: crypto.randomUUID(),
-            audioBlob: isAccomplish ? null : (i === 0 ? result.blob : null),
-            duration: isAccomplish ? 0 : (i === 0 ? result.duration : 0),
-            transcription: parts[i] || '',
-            createdAt: now,
-            listId: currentListId,
-            completed: false,
-            categories: categorizeNote(parts[i] || ''),
-            sentiment: null
-          };
-          await saveNote(note);
-          list.noteOrder.unshift(note.id);
-          savedNotes.push(note);
-        }
-
-        await saveList(list);
-        await renderListDetail(currentListId);
-
-        // Background sentiment analysis — runs after recording finishes
-        // so model loading doesn't compete with MediaRecorder for memory.
-        // Only for capture lists — accomplish lists don't use sentiment.
-        const listIdAtSave = currentListId;
-        if (!isAccomplish) {
-          (async () => {
-            for (const note of savedNotes) {
-              if (!note.transcription) continue;
-              try {
-                const sentiment = await analyzeSentiment(note.transcription);
-                note.sentiment = sentiment;
-                await saveNote(note);
-                if (currentListId === listIdAtSave && !isRecording) {
-                  await renderListDetail(listIdAtSave);
-                }
-              } catch (e) {
-                // Sentiment analysis failed — note still saved without it
-              }
-            }
-            // Also process any other unanalyzed notes now that recording is done
-            processUnanalyzedNotes(listIdAtSave);
-          })();
-        } else {
-          // Still run categorization for unanalyzed notes in accomplish mode
-          processUnanalyzedNotes(listIdAtSave);
-        }
+        await saveVoiceCapture(result);
       } else if (result) {
-        recordHint.textContent = 'Too short \u2014 hold longer';
+        recordHint.textContent = 'Hold a bit longer for a usable capture.';
       }
     } else {
       await startRecording();
       isRecording = true;
       recordBtn.classList.add('recording');
       recorderEl.classList.add('recording');
-      recordHint.textContent = 'Tap to stop';
+      recordHint.textContent = 'Tap to save';
     }
-  } catch (err) {
+  } catch (error) {
     isRecording = false;
     recordBtn.classList.remove('recording');
     recorderEl.classList.remove('recording');
+    stopTimer();
     stopWaveform();
-    if (typeof MediaRecorder === 'undefined') {
-      recordHint.textContent = 'Recording not supported in this browser';
-    } else {
-      recordHint.textContent = 'Microphone access denied';
-    }
+    recordHint.textContent = 'Microphone capture is unavailable right now.';
   } finally {
     recordBusy = false;
   }
+}
+
+async function saveVaultSettings() {
+  if (!state.activeVault) return;
+  const previousRelayUrl = String(state.activeVault.relayUrl || '').trim();
+  const nextVault = {
+    ...state.activeVault,
+    name: vaultNameInput.value.trim() || state.activeVault.name,
+    relayUrl: relayUrlInput.value.trim()
+  };
+  await saveVault(nextVault);
+  if (String(nextVault.relayUrl || '') !== previousRelayUrl) {
+    await saveSyncState(alignSyncStateToRelay(await getSyncState(nextVault.id), nextVault.id, nextVault.relayUrl));
+  }
+  state.activeVault = nextVault;
+  await refreshState();
+  renderVaultSheet();
+}
+
+async function createNewVault() {
+  const vault = createVaultDescriptor(vaultNameInput.value.trim() || 'New Vault', relayUrlInput.value.trim());
+  await saveVault(vault);
+  state.activeVaultId = vault.id;
+  await setActiveVaultId(vault.id);
+  await refreshState();
+  renderVaultSheet();
+}
+
+async function applyInvite() {
+  const invite = parseVaultInvite(inviteInput.value);
+  if (!invite) {
+    syncStatus.textContent = 'That invite code could not be parsed.';
+    return;
+  }
+
+  const existing = await getVault(invite.vaultId);
+  const vault = {
+    id: invite.vaultId,
+    name: invite.name || (existing && existing.name) || 'Shared Vault',
+    relayUrl: invite.relayUrl || (existing && existing.relayUrl) || '',
+    createdAt: (existing && existing.createdAt) || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: 'active',
+    vaultKey: invite.vaultKey,
+    readKey: invite.readKey,
+    writeKey: invite.writeKey || ''
+  };
+  await saveVault(vault);
+  await saveSyncState(alignSyncStateToRelay(await getSyncState(vault.id), vault.id, vault.relayUrl));
+  state.activeVaultId = vault.id;
+  await setActiveVaultId(vault.id);
+  inviteInput.value = '';
+  await refreshState();
+  renderVaultSheet();
+  syncStatus.textContent = 'Joined ' + vault.name + '.';
+}
+
+captureActions.addEventListener('click', (event) => {
+  const button = event.target.closest('.capture-action');
+  if (!button) return;
+  const action = button.dataset.action;
+  if (action === 'file') {
+    fileInput.click();
+    return;
+  }
+  if (action === 'photo') {
+    photoInput.click();
+    return;
+  }
+  setCaptureMode(state.captureMode === action ? '' : action);
 });
 
-// --- Theme ---
+textForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await createTextCapture(textInput.value);
+});
 
-const THEME_META_COLORS = {
-  '': '#1a1a2e',
-  aurora: '#1c1017',
-  frost: '#f4f5f7',
-  neon: '#0a0a0f'
-};
+linkForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await createLinkCapture(linkInput.value, linkNoteInput.value);
+});
 
-function applyTheme(theme) {
-  if (theme) {
-    document.documentElement.dataset.theme = theme;
-  } else {
-    delete document.documentElement.dataset.theme;
+fileInput.addEventListener('change', async () => {
+  if (fileInput.files && fileInput.files[0]) {
+    await createFileCapture(fileInput.files[0], 'file');
   }
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = THEME_META_COLORS[theme] || THEME_META_COLORS[''];
-  if (themePicker) {
-    themePicker.querySelectorAll('.theme-swatch').forEach((btn) => {
-      btn.classList.toggle('active', (btn.dataset.themeValue || '') === (theme || ''));
-    });
+  fileInput.value = '';
+});
+
+photoInput.addEventListener('change', async () => {
+  if (photoInput.files && photoInput.files[0]) {
+    await createFileCapture(photoInput.files[0], 'photo');
   }
-  localStorage.setItem('voice-notes-theme', theme || '');
+  photoInput.value = '';
+});
+
+askForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  state.queryResult = executeQuery(askInput.value.trim(), state.projection);
+  renderAskResult();
+});
+
+tabInbox.addEventListener('click', () => setTab('inbox'));
+tabAsk.addEventListener('click', () => setTab('ask'));
+settingsBtn.addEventListener('click', showVaultSheet);
+vaultPill.addEventListener('click', showVaultSheet);
+vaultBackdrop.addEventListener('click', hideVaultSheet);
+vaultCloseBtn.addEventListener('click', hideVaultSheet);
+saveVaultBtn.addEventListener('click', saveVaultSettings);
+createVaultBtn.addEventListener('click', createNewVault);
+generateInviteBtn.addEventListener('click', () => {
+  if (!state.activeVault) return;
+  inviteOutput.value = createVaultInvite(state.activeVault);
+  inviteOutput.focus();
+  inviteOutput.select();
+});
+applyInviteBtn.addEventListener('click', applyInvite);
+vaultSelector.addEventListener('change', async () => {
+  state.activeVaultId = vaultSelector.value;
+  await setActiveVaultId(state.activeVaultId);
+  await refreshState();
+  renderVaultSheet();
+});
+syncBtn.addEventListener('click', syncActiveVault);
+recordBtn.addEventListener('click', toggleRecording);
+entityBackdrop.addEventListener('click', hideEntity);
+entityCloseBtn.addEventListener('click', hideEntity);
+editorBackdrop.addEventListener('click', hideEditor);
+editorCloseBtn.addEventListener('click', hideEditor);
+editorSaveBtn.addEventListener('click', saveEditorChanges);
+
+async function init() {
+  const vaultState = await ensureVaultState();
+  state.deviceId = vaultState.deviceId;
+  state.activeVaultId = vaultState.activeVaultId;
+  await migrateLegacyData(state.activeVaultId);
+  await refreshState();
+  setTab('inbox');
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 }
 
-if (themePicker) {
-  themePicker.addEventListener('click', (e) => {
-    const btn = e.target.closest('.theme-swatch');
-    if (!btn) return;
-    applyTheme(btn.dataset.themeValue || '');
-  });
-}
-
-applyTheme(localStorage.getItem('voice-notes-theme') || '');
-
-// --- Service Worker Registration ---
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js')
-    .catch((err) => console.error('SW registration failed:', err));
-}
-
-// --- Initialization ---
-
-showListsView();
+init().catch((error) => {
+  appTitle.textContent = 'LifeOS Capture';
+  syncStatus.textContent = 'Startup failed: ' + (error.message || error);
+});

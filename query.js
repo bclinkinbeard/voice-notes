@@ -31,7 +31,8 @@ function rankEntry(entry, projection, tokens) {
     entry.captureType,
     entry.derivedTags.join(' '),
     entityNames,
-    entry.waitingOn.join(' ')
+    entry.waitingOn.join(' '),
+    entry.nextStep
   ].join(' '));
 
   let score = 0;
@@ -106,6 +107,11 @@ export function planQuery(query) {
     return { kind: 'waiting-on', subject: waitingMatch[1].trim(), tokens: tokenizeText(waitingMatch[1]) };
   }
 
+  const nextStepMatch = normalized.match(/(?:what(?:'s| is)|show me)?\s*the?\s*next steps?(?: with| for| on)? (.+)$/);
+  if (nextStepMatch) {
+    return { kind: 'next-step', subject: nextStepMatch[1].trim(), tokens: tokenizeText(nextStepMatch[1]) };
+  }
+
   const entriesAboutMatch = normalized.match(/(?:show me )?entries about (.+)$/);
   if (entriesAboutMatch) {
     return { kind: 'entries-about', subject: entriesAboutMatch[1].trim(), tokens: tokenizeText(entriesAboutMatch[1]) };
@@ -140,6 +146,25 @@ function collectWaitingOn(entity, projection) {
       values.push(...entry.waitingOn);
       supportingEntries.push(entry);
     } else if (normalizeText(entry.text).includes('waiting on') || normalizeText(entry.text).includes('waiting for')) {
+      supportingEntries.push(entry);
+    }
+  }
+
+  return {
+    values: unique(values),
+    supportingEntries: unique(supportingEntries)
+  };
+}
+
+function collectNextSteps(entity, projection) {
+  const values = entity.nextStep ? [entity.nextStep] : [];
+  const supportingEntries = [];
+
+  for (const entry of getActiveRelatedEntries(entity, projection)) {
+    if (entry.nextStep) {
+      values.push(entry.nextStep);
+      supportingEntries.push(entry);
+    } else if (normalizeText(entry.text).includes('next step')) {
       supportingEntries.push(entry);
     }
   }
@@ -208,6 +233,38 @@ export function executeQuery(query, projection) {
       entries: supportingEntries.slice(0, 8),
       citations: supportingEntries.slice(0, 6).map((entry) => ({ type: 'capture', id: entry.id })),
       followUps: ['Show me entries about ' + entity.title + '.', 'What are my current projects?']
+    };
+  }
+
+  if (plan.kind === 'next-step') {
+    const entity = resolveEntity(plan.subject, projection);
+    if (!entity) {
+      const entries = searchEntries(plan.subject, projection).slice(0, 8);
+      return {
+        plan,
+        answer: 'I could not resolve that item yet, but here are the closest related entries.',
+        entities: [],
+        entries,
+        citations: entries.map((entry) => ({ type: 'capture', id: entry.id })),
+        followUps: ['Show me entries about ' + plan.subject + '.']
+      };
+    }
+
+    const nextSteps = collectNextSteps(entity, projection);
+    const supportingEntries = nextSteps.supportingEntries.length > 0
+      ? nextSteps.supportingEntries
+      : getActiveRelatedEntries(entity, projection);
+    const answer = nextSteps.values.length > 0
+      ? 'Next steps for ' + entity.title + ': ' + nextSteps.values.join('; ') + '.'
+      : 'No explicit next steps found for ' + entity.title + ' yet.';
+
+    return {
+      plan,
+      answer,
+      entities: [entity],
+      entries: supportingEntries.slice(0, 8),
+      citations: supportingEntries.slice(0, 6).map((entry) => ({ type: 'capture', id: entry.id })),
+      followUps: ['What are we waiting on with ' + entity.title + '?', 'Show me entries about ' + entity.title + '.']
     };
   }
 

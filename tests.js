@@ -151,7 +151,7 @@ await suite('Topic classification and query results', () => {
     makeEvent('evt:1', EVENT_KINDS.CAPTURE_CREATED, { captureId: 'capture:1', captureType: 'text' }),
     makeEvent('evt:2', EVENT_KINDS.TEXT_EXTRACTED, { captureId: 'capture:1', mode: 'manual', text: 'Nutrition check-in: protein target feels low and meal prep slipped this week.' }),
     makeEvent('evt:3', EVENT_KINDS.CAPTURE_CREATED, { captureId: 'capture:2', captureType: 'text' }, { occurredAt: '2026-03-20T11:00:00.000Z', recordedAt: '2026-03-20T11:00:00.000Z' }),
-    makeEvent('evt:4', EVENT_KINDS.TEXT_EXTRACTED, { captureId: 'capture:2', mode: 'manual', text: 'Bathroom remodel project update. Waiting on permit approval.' }, { occurredAt: '2026-03-20T11:00:00.000Z', recordedAt: '2026-03-20T11:00:00.000Z' })
+    makeEvent('evt:4', EVENT_KINDS.TEXT_EXTRACTED, { captureId: 'capture:2', mode: 'manual', text: 'Bathroom remodel project update. Waiting on permit approval. Next step is confirm tile samples.' }, { occurredAt: '2026-03-20T11:00:00.000Z', recordedAt: '2026-03-20T11:00:00.000Z' })
   ];
   const projection = materialize(events);
 
@@ -164,6 +164,9 @@ await suite('Topic classification and query results', () => {
 
   const waitingOn = executeQuery('What are we waiting on with the bathroom remodel project?', projection);
   assert(waitingOn.answer.includes('permit approval'), 'waiting-on query summarizes blocker');
+
+  const nextSteps = executeQuery('What are the next steps for the bathroom remodel project?', projection);
+  assert(nextSteps.answer.includes('confirm tile samples'), 'next-step query summarizes next action');
 });
 
 await suite('Archived captures stay out of Ask results', () => {
@@ -214,6 +217,7 @@ await suite('Query planning', () => {
   assertEqual(planQuery('What are my current projects?').kind, 'current-projects', 'plans current-project queries');
   assertEqual(planQuery('Show me entries about nutrition.').kind, 'entries-about', 'plans entries-about queries');
   assertEqual(planQuery('What are we waiting on with the bathroom remodel?').kind, 'waiting-on', 'plans waiting-on queries');
+  assertEqual(planQuery('What are the next steps for the bathroom remodel?').kind, 'next-step', 'plans next-step queries');
 });
 
 await suite('Legacy migration preview', () => {
@@ -337,7 +341,7 @@ await suite('Source integrity', () => {
   assert(appJs.includes('createHttpSyncTransport'), 'app.js uses sync transport');
   assert(packageJson.includes('dev:server'), 'package scripts include the relay server');
   assert(relayServer.includes('createRelayServer'), 'relay server entrypoint exists');
-  assert(swJs.includes('lifeos-capture-v24'), 'service worker cache version bumped');
+  assert(swJs.includes('lifeos-capture-v25'), 'service worker cache version bumped');
   assert(swJs.includes('./storage.js'), 'service worker caches module graph');
   assert(manifest.includes('LifeOS Capture'), 'manifest renamed');
 });

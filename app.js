@@ -387,6 +387,12 @@ function createTimelineCard(entry) {
     badge.textContent = 'Waiting on: ' + waitingOn;
     chips.appendChild(badge);
   }
+  if (entry.nextStep) {
+    const badge = document.createElement('span');
+    badge.className = 'status-chip';
+    badge.textContent = 'Next step: ' + entry.nextStep;
+    chips.appendChild(badge);
+  }
   if (entry.status && entry.status !== 'archived') {
     const badge = document.createElement('span');
     badge.className = 'status-chip';
@@ -473,6 +479,13 @@ function renderEntityDrawer() {
     entityFacts.appendChild(fact);
   }
 
+  if (entity.nextStep) {
+    const fact = document.createElement('p');
+    fact.className = 'drawer-copy';
+    fact.textContent = 'Next step: ' + entity.nextStep;
+    entityFacts.appendChild(fact);
+  }
+
   if (entity.summaries.length > 0) {
     const summary = document.createElement('p');
     summary.className = 'drawer-copy';
@@ -508,7 +521,7 @@ function renderVaultSheet() {
 
 function renderAppShell() {
   appTitle.textContent = 'LifeOS Capture';
-  appVersion.textContent = 'v24';
+  appVersion.textContent = 'v25';
   vaultPill.textContent = state.activeVault ? state.activeVault.name : 'Vault';
   renderHeadlineChips();
   renderTimeline();

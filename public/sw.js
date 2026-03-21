@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lifeos-capture-v24';
+const CACHE_NAME = 'lifeos-capture-v25';
 const SHELL = [
   './',
   './app.css',

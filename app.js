@@ -6,7 +6,7 @@ import { executeQuery } from './query.js';
 import {
   EVENT_KINDS,
   appendEvents,
-  alignSyncStateToRelay,
+  alignSyncStateToSyncUrl,
   createEventEnvelope,
   createVaultDescriptor,
   ensureVaultState,
@@ -80,7 +80,7 @@ const vaultBackdrop = document.getElementById('vault-backdrop');
 const vaultCloseBtn = document.getElementById('vault-close-btn');
 const vaultSelector = document.getElementById('vault-selector');
 const vaultNameInput = document.getElementById('vault-name-input');
-const relayUrlInput = document.getElementById('relay-url-input');
+const syncUrlInput = document.getElementById('sync-url-input');
 const saveVaultBtn = document.getElementById('save-vault-btn');
 const createVaultBtn = document.getElementById('create-vault-btn');
 const generateInviteBtn = document.getElementById('generate-invite-btn');
@@ -500,11 +500,11 @@ function renderVaultSheet() {
   }
   if (state.activeVault) {
     vaultNameInput.value = state.activeVault.name || '';
-    relayUrlInput.value = state.activeVault.relayUrl || '';
+    syncUrlInput.value = state.activeVault.syncUrl || '';
   }
-  syncStatus.textContent = state.activeVault && state.activeVault.relayUrl
-    ? 'Relay ready: ' + state.activeVault.relayUrl
-    : 'Local-only mode. Add a relay URL when you want shared-key sync.';
+  syncStatus.textContent = state.activeVault && state.activeVault.syncUrl
+    ? 'Sync ready: ' + state.activeVault.syncUrl
+    : 'Local-only mode. Add a sync URL when you want shared-key sync.';
 }
 
 function renderAppShell() {
@@ -838,14 +838,14 @@ async function saveEditorChanges() {
 }
 
 async function syncActiveVault() {
-  if (!state.activeVault || !state.activeVault.relayUrl) {
-    syncStatus.textContent = 'Add a relay URL to enable shared-key sync.';
+  if (!state.activeVault || !state.activeVault.syncUrl) {
+    syncStatus.textContent = 'Add a sync URL to enable shared-key sync.';
     return;
   }
 
   syncStatus.textContent = 'Syncing vault...';
   const storedSyncState = await getSyncState(state.activeVault.id);
-  const syncState = alignSyncStateToRelay(storedSyncState, state.activeVault.id, state.activeVault.relayUrl);
+  const syncState = alignSyncStateToSyncUrl(storedSyncState, state.activeVault.id, state.activeVault.syncUrl);
   try {
     const transport = createHttpSyncTransport(state.activeVault);
     const currentEvents = await getEventsByVault(state.activeVault.id);
@@ -859,7 +859,7 @@ async function syncActiveVault() {
     await saveSyncState({
       id: state.activeVault.id,
       vaultId: state.activeVault.id,
-      relayUrl: state.activeVault.relayUrl || '',
+      syncUrl: state.activeVault.syncUrl || '',
       lastPushCursor: pushResult.cursor || syncState.lastPushCursor || '',
       lastPullCursor: pullResult.cursor || syncState.lastPullCursor || '',
       lastArtifactPushCursor: pushArtifactResult.cursor || syncState.lastArtifactPushCursor || '',
@@ -875,7 +875,7 @@ async function syncActiveVault() {
       ...syncState,
       id: state.activeVault.id,
       vaultId: state.activeVault.id,
-      relayUrl: state.activeVault.relayUrl || '',
+      syncUrl: state.activeVault.syncUrl || '',
       lastError: error.message || 'Sync failed.'
     });
   }
@@ -1147,15 +1147,15 @@ async function toggleRecording() {
 
 async function saveVaultSettings() {
   if (!state.activeVault) return;
-  const previousRelayUrl = String(state.activeVault.relayUrl || '').trim();
+  const previousSyncUrl = String(state.activeVault.syncUrl || '').trim();
   const nextVault = {
     ...state.activeVault,
     name: vaultNameInput.value.trim() || state.activeVault.name,
-    relayUrl: relayUrlInput.value.trim()
+    syncUrl: syncUrlInput.value.trim()
   };
   await saveVault(nextVault);
-  if (String(nextVault.relayUrl || '') !== previousRelayUrl) {
-    await saveSyncState(alignSyncStateToRelay(await getSyncState(nextVault.id), nextVault.id, nextVault.relayUrl));
+  if (String(nextVault.syncUrl || '') !== previousSyncUrl) {
+    await saveSyncState(alignSyncStateToSyncUrl(await getSyncState(nextVault.id), nextVault.id, nextVault.syncUrl));
   }
   state.activeVault = nextVault;
   await refreshState();
@@ -1163,7 +1163,7 @@ async function saveVaultSettings() {
 }
 
 async function createNewVault() {
-  const vault = createVaultDescriptor(vaultNameInput.value.trim() || 'New Vault', relayUrlInput.value.trim());
+  const vault = createVaultDescriptor(vaultNameInput.value.trim() || 'New Vault', syncUrlInput.value.trim());
   await saveVault(vault);
   state.activeVaultId = vault.id;
   await setActiveVaultId(vault.id);
@@ -1182,7 +1182,7 @@ async function applyInvite() {
   const vault = {
     id: invite.vaultId,
     name: invite.name || (existing && existing.name) || 'Shared Vault',
-    relayUrl: invite.relayUrl || (existing && existing.relayUrl) || '',
+    syncUrl: invite.syncUrl || (existing && existing.syncUrl) || '',
     createdAt: (existing && existing.createdAt) || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     status: 'active',
@@ -1191,7 +1191,7 @@ async function applyInvite() {
     writeKey: invite.writeKey || ''
   };
   await saveVault(vault);
-  await saveSyncState(alignSyncStateToRelay(await getSyncState(vault.id), vault.id, vault.relayUrl));
+  await saveSyncState(alignSyncStateToSyncUrl(await getSyncState(vault.id), vault.id, vault.syncUrl));
   state.activeVaultId = vault.id;
   await setActiveVaultId(vault.id);
   inviteInput.value = '';

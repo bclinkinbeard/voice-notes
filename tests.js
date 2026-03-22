@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { buildProjection, factSignature, normalizeText, slugify, tokenizeText } from './projections.js';
 import { executeQuery, planQuery } from './query.js';
 import { createVaultInvite, decryptArtifact, decryptEnvelope, encryptArtifact, encryptEnvelope, parseVaultInvite } from './sync.js';
-import { alignSyncStateToRelay, createVaultDescriptor, EVENT_KINDS, previewLegacyMigration } from './storage.js';
+import { alignSyncStateToSyncUrl, createVaultDescriptor, EVENT_KINDS, previewLegacyMigration } from './storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -242,12 +242,12 @@ await suite('Legacy migration preview', () => {
 });
 
 await suite('Sync invite round-trip', () => {
-  const descriptor = createVaultDescriptor('Shared Remodel Vault', 'https://relay.example.com');
+  const descriptor = createVaultDescriptor('Shared Remodel Vault', 'https://sync.example.com');
   const invite = createVaultInvite({
     ...descriptor,
     id: 'vault:shared',
     name: 'Shared Remodel Vault',
-    relayUrl: 'https://relay.example.com',
+    syncUrl: 'https://sync.example.com',
     vaultKey: 'vault-secret',
     readKey: 'read-secret',
     writeKey: 'write-secret'
@@ -255,16 +255,16 @@ await suite('Sync invite round-trip', () => {
   const parsed = parseVaultInvite(invite);
   assertEqual(parsed.vaultId, 'vault:shared', 'vault id round-trips');
   assertEqual(parsed.name, 'Shared Remodel Vault', 'vault name round-trips');
-  assertEqual(parsed.relayUrl, 'https://relay.example.com', 'relay url round-trips');
+  assertEqual(parsed.syncUrl, 'https://sync.example.com', 'sync url round-trips');
   assertEqual(parsed.vaultKey, 'vault-secret', 'vault key round-trips');
   assert(descriptor.vaultKey, 'vault descriptors include a vault encryption key');
 });
 
-await suite('Sync state resets when the relay URL changes', () => {
+await suite('Sync state resets when the sync URL changes', () => {
   const current = {
     id: 'vault:1',
     vaultId: 'vault:1',
-    relayUrl: 'https://relay-a.example.com',
+    syncUrl: 'https://sync-a.example.com',
     lastPushCursor: 'push-cursor',
     lastPullCursor: 'pull-cursor',
     lastArtifactPushCursor: 'artifact-push-cursor',
@@ -273,16 +273,16 @@ await suite('Sync state resets when the relay URL changes', () => {
     lastError: 'old error'
   };
 
-  const unchanged = alignSyncStateToRelay(current, 'vault:1', 'https://relay-a.example.com');
-  assertEqual(unchanged.lastPullCursor, 'pull-cursor', 'keeps cursors for the same relay');
+  const unchanged = alignSyncStateToSyncUrl(current, 'vault:1', 'https://sync-a.example.com');
+  assertEqual(unchanged.lastPullCursor, 'pull-cursor', 'keeps cursors for the same sync target');
 
-  const reset = alignSyncStateToRelay(current, 'vault:1', 'https://relay-b.example.com');
-  assertEqual(reset.relayUrl, 'https://relay-b.example.com', 'tracks the new relay URL');
-  assertEqual(reset.lastPushCursor, '', 'clears event push cursor on relay change');
-  assertEqual(reset.lastPullCursor, '', 'clears event pull cursor on relay change');
-  assertEqual(reset.lastArtifactPushCursor, '', 'clears artifact push cursor on relay change');
-  assertEqual(reset.lastArtifactPullCursor, '', 'clears artifact pull cursor on relay change');
-  assertEqual(reset.lastSyncedAt, '', 'clears last synced timestamp on relay change');
+  const reset = alignSyncStateToSyncUrl(current, 'vault:1', 'https://sync-b.example.com');
+  assertEqual(reset.syncUrl, 'https://sync-b.example.com', 'tracks the new sync URL');
+  assertEqual(reset.lastPushCursor, '', 'clears event push cursor on sync target change');
+  assertEqual(reset.lastPullCursor, '', 'clears event pull cursor on sync target change');
+  assertEqual(reset.lastArtifactPushCursor, '', 'clears artifact push cursor on sync target change');
+  assertEqual(reset.lastArtifactPullCursor, '', 'clears artifact pull cursor on sync target change');
+  assertEqual(reset.lastSyncedAt, '', 'clears last synced timestamp on sync target change');
 });
 
 await suite('Sync crypto uses vaultKey, not auth keys', async () => {
@@ -324,7 +324,7 @@ await suite('Source integrity', () => {
   const appCss = readFileSync(join(__dirname, 'app.css'), 'utf8');
   const appJs = readFileSync(join(__dirname, 'app.js'), 'utf8');
   const packageJson = readFileSync(join(__dirname, 'package.json'), 'utf8');
-  const relayServer = readFileSync(join(__dirname, 'server', 'index.js'), 'utf8');
+  const syncServer = readFileSync(join(__dirname, 'server', 'index.js'), 'utf8');
   const swJs = readFileSync(join(__dirname, 'public', 'sw.js'), 'utf8');
   const manifest = readFileSync(join(__dirname, 'public', 'manifest.json'), 'utf8');
 
@@ -335,8 +335,8 @@ await suite('Source integrity', () => {
   assert(appCss.includes('.entry-card'), 'app.css styles entry cards');
   assert(!appJs.includes('runFirstPartyEnrichers'), 'app.js no longer persists first-party enrichers');
   assert(appJs.includes('createHttpSyncTransport'), 'app.js uses sync transport');
-  assert(packageJson.includes('dev:server'), 'package scripts include the relay server');
-  assert(relayServer.includes('createRelayServer'), 'relay server entrypoint exists');
+  assert(packageJson.includes('server/sync-tests.js'), 'package scripts include the sync server tests');
+  assert(syncServer.includes('createSyncServer'), 'sync server entrypoint exists');
   assert(swJs.includes('lifeos-capture-v24'), 'service worker cache version bumped');
   assert(swJs.includes('./storage.js'), 'service worker caches module graph');
   assert(manifest.includes('LifeOS Capture'), 'manifest renamed');

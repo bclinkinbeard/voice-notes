@@ -77,12 +77,21 @@ export function generateSecret() {
   return randomBase64Url(24);
 }
 
+function resolveSyncUrl(value) {
+  return String((value && (value.syncUrl || value.relayUrl)) || '').trim();
+}
+
 function normalizeVaultDescriptor(vault) {
   if (!vault) return null;
+  const {
+    relayUrl: legacyRelayUrl,
+    syncUrl,
+    ...rest
+  } = vault;
   return {
-    ...vault,
+    ...rest,
     name: String(vault.name || DEFAULT_VAULT_NAME).trim() || DEFAULT_VAULT_NAME,
-    relayUrl: String(vault.relayUrl || '').trim(),
+    syncUrl: String(syncUrl || legacyRelayUrl || '').trim(),
     status: vault.status || 'active',
     vaultKey: vault.vaultKey || generateSecret(),
     readKey: vault.readKey || generateSecret(),
@@ -96,7 +105,8 @@ function vaultDescriptorChanged(original, normalized) {
     && normalized
     && (
       original.name !== normalized.name
-      || String(original.relayUrl || '') !== normalized.relayUrl
+      || resolveSyncUrl(original) !== normalized.syncUrl
+      || Object.prototype.hasOwnProperty.call(original, 'relayUrl')
       || original.status !== normalized.status
       || original.vaultKey !== normalized.vaultKey
       || original.readKey !== normalized.readKey
@@ -126,12 +136,12 @@ export function isRetiredDerivedEvent(event) {
   );
 }
 
-export function createVaultDescriptor(name, relayUrl) {
+export function createVaultDescriptor(name, syncUrl) {
   const now = new Date().toISOString();
   return {
     id: generateSortableId('vault'),
     name: String(name || DEFAULT_VAULT_NAME).trim() || DEFAULT_VAULT_NAME,
-    relayUrl: String(relayUrl || '').trim(),
+    syncUrl: String(syncUrl || '').trim(),
     createdAt: now,
     updatedAt: now,
     status: 'active',
@@ -396,31 +406,44 @@ export async function getProjection(vaultId) {
 }
 
 export async function getSyncState(vaultId) {
-  const db = await openDB();
-  const tx = db.transaction(STORE.SYNC_STATE, 'readonly');
-  const record = await requestToPromise(tx.objectStore(STORE.SYNC_STATE).get(vaultId));
-  await transactionDone(tx);
-  return record || {
+  return normalizeSyncStateRecord(await (async () => {
+    const db = await openDB();
+    const tx = db.transaction(STORE.SYNC_STATE, 'readonly');
+    const record = await requestToPromise(tx.objectStore(STORE.SYNC_STATE).get(vaultId));
+    await transactionDone(tx);
+    return record;
+  })(), vaultId);
+}
+
+function normalizeSyncStateRecord(syncState, vaultId) {
+  const {
+    relayUrl: legacyRelayUrl,
+    syncUrl,
+    ...rest
+  } = syncState || {};
+  return {
     id: vaultId,
     vaultId,
-    relayUrl: '',
+    syncUrl: '',
     lastPushCursor: '',
     lastPullCursor: '',
     lastArtifactPushCursor: '',
     lastArtifactPullCursor: '',
     lastSyncedAt: '',
-    lastError: ''
+    lastError: '',
+    ...rest,
+    syncUrl: String(syncUrl || legacyRelayUrl || '').trim()
   };
 }
 
-export function alignSyncStateToRelay(syncState, vaultId, relayUrl) {
-  const normalizedRelayUrl = String(relayUrl || '').trim();
-  const current = syncState || {};
-  const currentRelayUrl = String(current.relayUrl || '').trim();
+export function alignSyncStateToSyncUrl(syncState, vaultId, syncUrl) {
+  const normalizedSyncUrl = String(syncUrl || '').trim();
+  const current = normalizeSyncStateRecord(syncState, vaultId);
+  const currentSyncUrl = current.syncUrl;
   const next = {
     id: vaultId,
     vaultId,
-    relayUrl: normalizedRelayUrl,
+    syncUrl: normalizedSyncUrl,
     lastPushCursor: '',
     lastPullCursor: '',
     lastArtifactPushCursor: '',
@@ -430,10 +453,10 @@ export function alignSyncStateToRelay(syncState, vaultId, relayUrl) {
     ...current
   };
 
-  if (currentRelayUrl !== normalizedRelayUrl) {
+  if (currentSyncUrl !== normalizedSyncUrl) {
     return {
       ...next,
-      relayUrl: normalizedRelayUrl,
+      syncUrl: normalizedSyncUrl,
       lastPushCursor: '',
       lastPullCursor: '',
       lastArtifactPushCursor: '',
@@ -445,14 +468,15 @@ export function alignSyncStateToRelay(syncState, vaultId, relayUrl) {
 
   return {
     ...next,
-    relayUrl: normalizedRelayUrl
+    syncUrl: normalizedSyncUrl
   };
 }
 
 export async function saveSyncState(syncState) {
+  const normalized = normalizeSyncStateRecord(syncState, syncState?.vaultId || syncState?.id || '');
   const db = await openDB();
   const tx = db.transaction(STORE.SYNC_STATE, 'readwrite');
-  tx.objectStore(STORE.SYNC_STATE).put(syncState);
+  tx.objectStore(STORE.SYNC_STATE).put(normalized);
   await transactionDone(tx);
 }
 

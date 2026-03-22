@@ -1,18 +1,10 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
-
-function emptyState() {
-  return {
-    vaults: {}
-  };
-}
-
 function toBase64Url(value) {
   return Buffer.from(value, 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function fromBase64Url(value) {
-  const padded = String(value || '').replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(String(value || '').length / 4) * 4, '=');
+  const input = String(value || '');
+  const padded = input.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(input.length / 4) * 4, '=');
   return Buffer.from(padded, 'base64').toString('utf8');
 }
 
@@ -48,6 +40,13 @@ function decodeCursor(cursor) {
   }
 }
 
+function compareCollectionEntries(a, b, timeKey, idKey) {
+  if (a.sequence && b.sequence) return a.sequence - b.sequence;
+  if (a.sequence) return -1;
+  if (b.sequence) return 1;
+  return compareOrderedRecords(a.record, b.record, timeKey, idKey);
+}
+
 function normalizeCollection(records, timeKey, idKey) {
   const normalized = {};
   const entries = Object.values(records || {})
@@ -65,12 +64,7 @@ function normalizeCollection(records, timeKey, idKey) {
       };
     })
     .filter((entry) => entry && entry.record && entry.record[idKey])
-    .sort((a, b) => {
-      if (a.sequence && b.sequence) return a.sequence - b.sequence;
-      if (a.sequence) return -1;
-      if (b.sequence) return 1;
-      return compareOrderedRecords(a.record, b.record, timeKey, idKey);
-    });
+    .sort((a, b) => compareCollectionEntries(a, b, timeKey, idKey));
 
   let nextSequence = 1;
   for (const entry of entries) {
@@ -92,6 +86,7 @@ function normalizeVault(vault) {
   const normalizedVault = {
     readKey: '',
     writeKey: '',
+    createdAt: '',
     events: {},
     artifacts: {},
     nextEventSequence: 1,
@@ -133,134 +128,124 @@ function sortRecords(collection, timeKey, idKey, sinceSequence = 0) {
     .sort((a, b) => compareOrderedRecords(a, b, timeKey, idKey));
 }
 
-export class RelayStoreError extends Error {
+export class SyncStoreError extends Error {
   constructor(status, message) {
     super(message);
-    this.name = 'RelayStoreError';
+    this.name = 'SyncStoreError';
     this.status = status;
   }
 }
 
-export function createRelayStore(filePath) {
-  // File-backed JSON keeps the relay self-contained for local/dev use and acts as the contract reference implementation.
-  let loaded = false;
-  let state = emptyState();
-  let persistChain = Promise.resolve();
+function ensureBackend(backend) {
+  if (!backend || typeof backend.loadVault !== 'function' || typeof backend.saveVault !== 'function') {
+    throw new Error('Sync store requires a backend with loadVault() and saveVault().');
+  }
+}
 
-  async function ensureLoaded() {
-    if (loaded) return;
-    try {
-      state = JSON.parse(await readFile(filePath, 'utf8'));
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      state = emptyState();
-    }
-    state = {
-      vaults: Object.fromEntries(
-        Object.entries((state && state.vaults) || {}).map(([vaultId, vault]) => [vaultId, normalizeVault(vault)])
-      )
-    };
-    loaded = true;
+function queueVaultTask(chains, vaultId, task) {
+  const previous = chains.get(vaultId) || Promise.resolve();
+  const run = previous.then(task, task);
+  const settled = run.catch(() => {});
+  chains.set(vaultId, settled);
+  return run.finally(() => {
+    if (chains.get(vaultId) === settled) chains.delete(vaultId);
+  });
+}
+
+export function createSyncStore(backend) {
+  ensureBackend(backend);
+  const vaultChains = new Map();
+
+  async function loadVault(vaultId) {
+    const vault = await backend.loadVault(vaultId);
+    return vault ? normalizeVault(vault) : null;
   }
 
-  async function persist() {
-    persistChain = persistChain.then(async () => {
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, JSON.stringify(state, null, 2));
-    });
-    return persistChain;
+  async function saveVault(vaultId, vault) {
+    await backend.saveVault(vaultId, normalizeVault(vault));
   }
 
-  function getVault(vaultId) {
-    return state.vaults[vaultId] || null;
-  }
-
-  function ensureWritableVault(vaultId, auth) {
+  function ensureWritableVault(vaultId, auth, vault) {
     if (!auth.writeKey) {
-      throw new RelayStoreError(401, 'X-Vault-Write-Key is required.');
+      throw new SyncStoreError(401, 'X-Vault-Write-Key is required.');
     }
 
-    let vault = getVault(vaultId);
     if (!vault) {
       if (!auth.readKey) {
-        throw new RelayStoreError(401, 'X-Vault-Read-Key is required when creating a vault.');
+        throw new SyncStoreError(401, 'X-Vault-Read-Key is required when creating a vault.');
       }
-      vault = {
+      return normalizeVault({
         readKey: auth.readKey,
         writeKey: auth.writeKey,
-        events: {},
-        artifacts: {},
-        nextEventSequence: 1,
-        nextArtifactSequence: 1
-      };
-      state.vaults[vaultId] = vault;
-      return vault;
+        createdAt: new Date().toISOString()
+      });
     }
 
     if (vault.writeKey !== auth.writeKey) {
-      throw new RelayStoreError(403, 'Invalid write key.');
+      throw new SyncStoreError(403, 'Invalid write key.');
     }
 
     if (auth.readKey && vault.readKey !== auth.readKey) {
-      throw new RelayStoreError(403, 'Invalid read key.');
+      throw new SyncStoreError(403, 'Invalid read key.');
     }
 
     return vault;
   }
 
-  function requireReadableVault(vaultId, auth) {
+  function requireReadableVault(vaultId, auth, vault) {
     if (!auth.readKey) {
-      throw new RelayStoreError(401, 'X-Vault-Read-Key is required.');
+      throw new SyncStoreError(401, 'X-Vault-Read-Key is required.');
     }
 
-    const vault = getVault(vaultId);
     if (!vault) {
-      throw new RelayStoreError(404, 'Vault not found.');
+      throw new SyncStoreError(404, 'Vault not found.');
     }
 
     if (vault.readKey !== auth.readKey) {
-      throw new RelayStoreError(403, 'Invalid read key.');
+      throw new SyncStoreError(403, 'Invalid read key.');
     }
 
     return vault;
   }
 
   async function upsertRecords(vaultId, auth, collectionName, idKey, timeKey, records) {
-    await ensureLoaded();
-    const vault = ensureWritableVault(vaultId, auth);
-    const sequenceKey = collectionName === 'events' ? 'nextEventSequence' : 'nextArtifactSequence';
-    let accepted = 0;
+    return queueVaultTask(vaultChains, vaultId, async () => {
+      const vault = ensureWritableVault(vaultId, auth, await loadVault(vaultId));
+      const sequenceKey = collectionName === 'events' ? 'nextEventSequence' : 'nextArtifactSequence';
+      let accepted = 0;
 
-    for (const record of records || []) {
-      if (!record || !record[idKey]) continue;
-      if (vault[collectionName][record[idKey]]) continue;
-      accepted += 1;
-      vault[collectionName][record[idKey]] = {
-        record,
-        sequence: Number(vault[sequenceKey]) || 1
+      for (const record of records || []) {
+        if (!record || !record[idKey]) continue;
+        if (vault[collectionName][record[idKey]]) continue;
+        accepted += 1;
+        vault[collectionName][record[idKey]] = {
+          record,
+          sequence: Number(vault[sequenceKey]) || 1
+        };
+        vault[sequenceKey] = (Number(vault[sequenceKey]) || 1) + 1;
+      }
+
+      await saveVault(vaultId, vault);
+      return {
+        cursor: encodeCursor(currentSequence(vault, sequenceKey)),
+        accepted
       };
-      vault[sequenceKey] = (Number(vault[sequenceKey]) || 1) + 1;
-    }
-
-    await persist();
-    return {
-      cursor: encodeCursor(currentSequence(vault, sequenceKey)),
-      accepted
-    };
+    });
   }
 
   async function readRecords(vaultId, auth, collectionName, idKey, timeKey, since) {
-    await ensureLoaded();
-    const vault = requireReadableVault(vaultId, auth);
-    const cursor = decodeCursor(since);
-    const sequenceKey = collectionName === 'events' ? 'nextEventSequence' : 'nextArtifactSequence';
-    const sinceSequence = resolveCursorSequence(vault[collectionName], cursor, timeKey, idKey);
-    const records = sortRecords(vault[collectionName], timeKey, idKey, sinceSequence);
+    return queueVaultTask(vaultChains, vaultId, async () => {
+      const vault = requireReadableVault(vaultId, auth, await loadVault(vaultId));
+      const cursor = decodeCursor(since);
+      const sequenceKey = collectionName === 'events' ? 'nextEventSequence' : 'nextArtifactSequence';
+      const sinceSequence = resolveCursorSequence(vault[collectionName], cursor, timeKey, idKey);
+      const records = sortRecords(vault[collectionName], timeKey, idKey, sinceSequence);
 
-    return {
-      cursor: encodeCursor(currentSequence(vault, sequenceKey)),
-      records
-    };
+      return {
+        cursor: encodeCursor(currentSequence(vault, sequenceKey)),
+        records
+      };
+    });
   }
 
   return {

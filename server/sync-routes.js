@@ -1,4 +1,4 @@
-import { RelayStoreError } from './relay-store.js';
+import { SyncStoreError } from './sync-store.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -28,7 +28,7 @@ function readJson(req) {
       try {
         resolve(JSON.parse(body));
       } catch (error) {
-        reject(new RelayStoreError(400, 'Request body must be valid JSON.'));
+        reject(new SyncStoreError(400, 'Request body must be valid JSON.'));
       }
     });
     req.on('error', reject);
@@ -51,8 +51,8 @@ function authFromRequest(req) {
   };
 }
 
-export function createRelayRequestHandler(store) {
-  return async function relayRequestHandler(req, res) {
+export function createSyncRequestHandler(store) {
+  return async function syncRequestHandler(req, res) {
     try {
       if (req.method === 'OPTIONS') {
         res.writeHead(204, CORS_HEADERS);
@@ -103,12 +103,12 @@ export function createRelayRequestHandler(store) {
 
       writeJson(res, 405, { error: 'Method not allowed.' });
     } catch (error) {
-      if (error instanceof RelayStoreError) {
+      if (error instanceof SyncStoreError) {
         writeJson(res, error.status, { error: error.message });
         return;
       }
 
-      writeJson(res, 500, { error: error.message || 'Unexpected relay error.' });
+      writeJson(res, 500, { error: error.message || 'Unexpected sync service error.' });
     }
   };
 }

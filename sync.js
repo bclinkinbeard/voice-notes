@@ -40,9 +40,13 @@ async function deriveAesKey(secret) {
   return crypto.subtle.importKey('raw', hash, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
+function getSyncUrl(vaultDescriptor) {
+  return String((vaultDescriptor && (vaultDescriptor.syncUrl || vaultDescriptor.relayUrl)) || '').trim();
+}
+
 function requireSyncCapability(vaultDescriptor, options = {}) {
-  if (!vaultDescriptor || !vaultDescriptor.relayUrl) {
-    throw new Error('Configure a relay URL before syncing.');
+  if (!getSyncUrl(vaultDescriptor)) {
+    throw new Error('Configure a sync URL before syncing.');
   }
   if (!vaultDescriptor.vaultKey) {
     throw new Error('This vault is missing its encryption key. Reapply a current invite.');
@@ -56,14 +60,14 @@ function requireSyncCapability(vaultDescriptor, options = {}) {
 }
 
 function buildVaultUrl(vaultDescriptor, resource) {
-  return vaultDescriptor.relayUrl.replace(/\/$/, '') + '/v1/vaults/' + encodeURIComponent(vaultDescriptor.id) + '/' + resource;
+  return getSyncUrl(vaultDescriptor).replace(/\/$/, '') + '/v1/vaults/' + encodeURIComponent(vaultDescriptor.id) + '/' + resource;
 }
 
 export function createVaultInvite(vaultDescriptor) {
   return encodeJson({
     vaultId: vaultDescriptor.id,
     name: vaultDescriptor.name,
-    relayUrl: vaultDescriptor.relayUrl || '',
+    syncUrl: getSyncUrl(vaultDescriptor),
     vaultKey: vaultDescriptor.vaultKey,
     readKey: vaultDescriptor.readKey,
     writeKey: vaultDescriptor.writeKey
@@ -74,7 +78,15 @@ export function parseVaultInvite(value) {
   try {
     const decoded = decodeJson(String(value || '').trim());
     if (!decoded || !decoded.vaultId || !decoded.vaultKey || !decoded.readKey) return null;
-    return decoded;
+    const {
+      relayUrl,
+      syncUrl,
+      ...rest
+    } = decoded;
+    return {
+      ...rest,
+      syncUrl: String(syncUrl || relayUrl || '').trim()
+    };
   } catch (error) {
     return null;
   }

@@ -26,22 +26,40 @@
     </header>
 
     <section id="hero">
-      <p id="hero-copy">Capture first. Interpret later. Search your life as a replayable stream of entries, facts, and evolving entities.</p>
-      <div id="tab-row">
-        <button id="tab-inbox" class="tab-btn active" type="button">Inbox</button>
-        <button id="tab-ask" class="tab-btn" type="button">Ask</button>
+      <p id="hero-copy">Capture first. Interpret later. Keep fast actions close, tuck low-frequency controls away, and make the stream easy to scan.</p>
+      <div id="hero-toolbar">
+        <div id="tab-row">
+          <button id="tab-inbox" class="tab-btn active" type="button">Inbox</button>
+          <button id="tab-ask" class="tab-btn" type="button">Ask</button>
+        </div>
+        <div id="variant-rail" aria-label="Design variants">
+          <button class="variant-chip" data-variant="signal" type="button">Signal</button>
+          <button class="variant-chip" data-variant="ledger" type="button">Ledger</button>
+          <button class="variant-chip" data-variant="atlas" type="button">Atlas</button>
+          <button class="variant-chip" data-variant="nocturne" type="button">Nocturne</button>
+        </div>
       </div>
     </section>
 
     <main id="views">
       <section id="inbox-view">
+        <div id="inbox-grid">
         <section id="capture-shell">
+          <div class="capture-shell-head">
+            <div>
+              <h2>Capture now</h2>
+              <p>Put the most common actions first. File and photo stay available, but quieter.</p>
+            </div>
+          </div>
           <div id="capture-actions">
             <button class="capture-action" data-action="voice" type="button">Voice</button>
             <button class="capture-action" data-action="text" type="button">Quick Note</button>
             <button class="capture-action" data-action="link" type="button">Paste Link</button>
-            <button class="capture-action" data-action="file" type="button">File</button>
-            <button class="capture-action" data-action="photo" type="button">Photo</button>
+          </div>
+
+          <div class="minimal-action-row">
+            <button class="ghost-btn" data-action="file" type="button">Attach file</button>
+            <button class="ghost-btn" data-action="photo" type="button">Add photo</button>
           </div>
 
           <div id="capture-panel" class="hidden">
@@ -75,7 +93,7 @@
         <input id="file-input" type="file" hidden>
         <input id="photo-input" type="file" accept="image/*" capture="environment" hidden>
 
-        <section id="focus-sections">
+        <div id="focus-sections">
           <div class="focus-card">
             <div class="focus-head">
               <h2>Current Projects</h2>
@@ -90,6 +108,7 @@
             </div>
             <div id="active-topics" class="chip-rail"></div>
           </div>
+        </div>
         </section>
 
         <section id="timeline-section">
@@ -102,6 +121,7 @@
           <div id="timeline-list"></div>
           <p id="timeline-empty">No entries yet. Capture a voice note, quick text, file, link, or photo to start building your vault.</p>
         </section>
+        </div>
       </section>
 
       <section id="ask-view" class="hidden">

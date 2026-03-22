@@ -3,14 +3,82 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SESSION_NAME="${1:-tourdoc}"
+VARIANT="${1:-signal}"
+SESSION_NAME="${2:-tourdoc-${VARIANT}}"
 
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-export PWCLI="$CODEX_HOME/skills/playwright/scripts/playwright_cli.sh"
+export PWCLI="${PWCLI:-$CODEX_HOME/skills/playwright/scripts/playwright_cli.sh}"
 
 cd "$ROOT_DIR"
 
-mkdir -p output/playwright/tour/mobile
+OUT_DIR="output/playwright/tour/${VARIANT}/mobile"
+mkdir -p "$OUT_DIR" docs
+DOC_PATH="docs/${VARIANT}-tour.md"
+
+write_doc() {
+  local note="$1"
+  local image_ext="${2:-svg}"
+  local image_block=""
+  if [[ -f "$OUT_DIR/inbox.${image_ext}" ]]; then
+    image_block=$(cat <<DOC
+## Screens
+
+### Inbox
+![${VARIANT^} inbox](../${OUT_DIR}/inbox.${image_ext})
+
+### Voice Capture
+![${VARIANT^} voice capture](../${OUT_DIR}/voice.${image_ext})
+
+### Quick Note
+![${VARIANT^} quick note](../${OUT_DIR}/quick-note.${image_ext})
+
+### Paste Link
+![${VARIANT^} paste link](../${OUT_DIR}/paste-link.${image_ext})
+
+### Ask
+![${VARIANT^} ask view](../${OUT_DIR}/ask.${image_ext})
+
+### Entity Drawer
+![${VARIANT^} entity drawer](../${OUT_DIR}/entity.${image_ext})
+
+### Vaults & Sync
+![${VARIANT^} vault sheet](../${OUT_DIR}/vaults.${image_ext})
+
+### Edit Entry
+![${VARIANT^} edit entry](../${OUT_DIR}/edit.${image_ext})
+DOC
+)
+  else
+    image_block=$(cat <<DOC
+## Screens
+
+No tour images were generated.
+DOC
+)
+  fi
+
+  cat > "$DOC_PATH" <<DOC
+# ${VARIANT^} Variant Tour
+
+This tour captures the **${VARIANT^}** variant at a mobile viewport using the seeded demo vault.
+
+${note}
+
+${image_block}
+DOC
+}
+
+render_fallback() {
+  rm -f "$OUT_DIR"/*
+  python scripts/render-tour_fallback.py "$VARIANT" "$OUT_DIR"
+  write_doc "Tour artifacts were generated with the built-in SVG fallback renderer via \`scripts/capture-tour.sh ${VARIANT}\`." svg
+  printf 'Rendered fallback tour for %s and wrote %s.\n' "$VARIANT" "$DOC_PATH"
+}
+
+if [[ ! -x "$PWCLI" ]]; then
+  render_fallback
+  exit 0
+fi
 
 pw_eval() {
   "$PWCLI" -s="$SESSION_NAME" eval "$1" >/dev/null
@@ -21,8 +89,8 @@ capture() {
   local raw
   local source
 
-  raw="$("$PWCLI" -s="$SESSION_NAME" screenshot)"
-  source="$(printf '%s\n' "$raw" | grep -oE '\([^)]*\.png\)' | tr -d '()' | head -n1)"
+  raw="$($PWCLI -s="$SESSION_NAME" screenshot)"
+  source="$(printf '%s\n' "$raw" | grep -oE '\([^)]*\.(png|svg)\)' | tr -d '()' | head -n1)"
 
   if [[ -z "$source" ]]; then
     echo "Could not determine screenshot output path." >&2
@@ -32,7 +100,7 @@ capture() {
   cp "$source" "$destination"
 }
 
-read -r -d '' INSTALL_HELPER <<'JS' || true
+read -r -d '' INSTALL_HELPER_TEMPLATE <<'JS' || true
 async () => {
   window.__tour = {
     wait(ms) {
@@ -53,10 +121,16 @@ async () => {
         if (next) next.click();
       }
     },
+    async setVariant(nextVariant) {
+      const button = document.querySelector('.variant-chip[data-variant="' + nextVariant + '"]');
+      if (button && !button.classList.contains('active')) button.click();
+      await this.wait(100);
+    },
     async setState(name) {
       this.close('vault-sheet', 'vault-close-btn');
       this.close('entity-drawer', 'entity-close-btn');
       this.close('editor-modal', 'editor-close-btn');
+      await this.setVariant('__VARIANT__');
 
       const inboxTab = document.getElementById('tab-inbox');
       const askTab = document.getElementById('tab-ask');
@@ -94,7 +168,7 @@ async () => {
       }
 
       window.scrollTo(0, 0);
-      await this.wait(200);
+      await this.wait(250);
       return name;
     }
   };
@@ -102,16 +176,32 @@ async () => {
 }
 JS
 
-pw_eval "$INSTALL_HELPER"
+INSTALL_HELPER="${INSTALL_HELPER_TEMPLATE//__VARIANT__/$VARIANT}"
+
+if ! "$PWCLI" -s="$SESSION_NAME" resize 430 932 >/dev/null 2>&1; then
+  render_fallback
+  exit 0
+fi
+
+if ! pw_eval "async () => { if (window.location.search !== '?variant=$VARIANT') { window.location.href = window.location.origin + '/?variant=$VARIANT'; } return true; }"; then
+  render_fallback
+  exit 0
+fi
+sleep 1
+if ! pw_eval "$INSTALL_HELPER"; then
+  render_fallback
+  exit 0
+fi
 
 states=(inbox voice quick-note paste-link ask entity vaults edit)
-
-rm -f output/playwright/tour/mobile/*.png
-
-"$PWCLI" -s="$SESSION_NAME" resize 430 932 >/dev/null
+rm -f "$OUT_DIR"/*
 for state in "${states[@]}"; do
-  pw_eval "async () => window.__tour.setState('$state')"
-  capture "output/playwright/tour/mobile/${state}.png"
+  if ! pw_eval "async () => window.__tour.setState('$state')"; then
+    render_fallback
+    exit 0
+  fi
+  capture "$OUT_DIR/${state}.png"
 done
 
-printf 'Captured %s mobile states.\n' "${#states[@]}"
+write_doc "Capture command completed successfully via \`scripts/capture-tour.sh ${VARIANT}\`." png
+printf 'Captured %s mobile states for %s and wrote %s.\n' "${#states[@]}" "$VARIANT" "$DOC_PATH"

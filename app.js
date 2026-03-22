@@ -37,7 +37,8 @@ const state = {
   queryResult: null,
   entityId: '',
   editingEntryId: '',
-  playback: null
+  playback: null,
+  variant: 'signal'
 };
 
 const appTitle = document.getElementById('app-title');
@@ -45,6 +46,8 @@ const appVersion = document.getElementById('app-version');
 const vaultPill = document.getElementById('vault-pill');
 const syncBtn = document.getElementById('sync-btn');
 const settingsBtn = document.getElementById('settings-btn');
+const heroCopy = document.getElementById('hero-copy');
+const variantRail = document.getElementById('variant-rail');
 const tabInbox = document.getElementById('tab-inbox');
 const tabAsk = document.getElementById('tab-ask');
 const inboxView = document.getElementById('inbox-view');
@@ -115,6 +118,86 @@ let isRecording = false;
 let recordBusy = false;
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+const VARIANTS = {
+  signal: {
+    label: 'Signal',
+    title: 'LifeOS Capture',
+    version: 'Signal / Fast lane',
+    eyebrow: 'Fast capture system',
+    hero: 'A crisp command-center layout that keeps capture, scan, and search obvious within seconds.',
+    askPlaceholder: 'What is blocked, what moved today, and what needs a follow-up?',
+    metaTheme: '#0f1418'
+  },
+  ledger: {
+    label: 'Ledger',
+    title: 'LifeOS Capture',
+    version: 'Ledger / Calm default',
+    eyebrow: 'Structured personal record',
+    hero: 'A clean light layout that reads like a notebook: quick to scan, low-noise, and easy to trust.',
+    askPlaceholder: 'What are my current projects, open blockers, and notes worth revisiting?',
+    metaTheme: '#f3f4f1'
+  },
+  atlas: {
+    label: 'Atlas',
+    title: 'LifeOS Capture',
+    version: 'Atlas / Overview first',
+    eyebrow: 'Maps work in motion',
+    hero: 'A wider dashboard variant that surfaces projects and topics earlier for faster orientation.',
+    askPlaceholder: 'Show me the project map, open loops, and everything related to nutrition.',
+    metaTheme: '#101317'
+  },
+  nocturne: {
+    label: 'Nocturne',
+    title: 'LifeOS Capture',
+    version: 'Nocturne / High focus',
+    eyebrow: 'Quiet mode for long sessions',
+    hero: 'A dense dark variant with sharp contrast and restrained highlights for late-night capture.',
+    askPlaceholder: 'Summarize what matters, what is waiting, and what changed most recently.',
+    metaTheme: '#0b0d10'
+  }
+};
+
+function getVariantFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const variant = params.get('variant');
+  return VARIANTS[variant] ? variant : 'signal';
+}
+
+function applyVariant(variant, options = {}) {
+  const next = VARIANTS[variant] ? variant : 'signal';
+  state.variant = next;
+  document.body.dataset.variant = next;
+  const config = VARIANTS[next];
+  document.title = config.label + ' — ' + config.title;
+  appTitle.textContent = config.title;
+  appVersion.textContent = config.version;
+  document.getElementById('eyebrow').textContent = config.eyebrow;
+  heroCopy.textContent = config.hero;
+  askInput.placeholder = config.askPlaceholder;
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  if (themeMeta) themeMeta.setAttribute('content', config.metaTheme);
+  for (const button of document.querySelectorAll('.variant-chip')) {
+    button.classList.toggle('active', button.dataset.variant === next);
+  }
+  if (!options.skipHistory) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('variant', next);
+    window.history.replaceState({}, '', url);
+  }
+}
+
+function triggerCaptureAction(action) {
+  if (action === 'file') {
+    fileInput.click();
+    return;
+  }
+  if (action === 'photo') {
+    photoInput.click();
+    return;
+  }
+  setCaptureMode(state.captureMode === action ? '' : action);
+}
 
 function formatDate(value) {
   return new Date(value).toLocaleString(undefined, {
@@ -508,8 +591,7 @@ function renderVaultSheet() {
 }
 
 function renderAppShell() {
-  appTitle.textContent = 'LifeOS Capture';
-  appVersion.textContent = 'v24';
+  applyVariant(state.variant, { skipHistory: true });
   vaultPill.textContent = state.activeVault ? state.activeVault.name : 'Vault';
   renderHeadlineChips();
   renderTimeline();
@@ -1200,19 +1282,17 @@ async function applyInvite() {
   syncStatus.textContent = 'Joined ' + vault.name + '.';
 }
 
-captureActions.addEventListener('click', (event) => {
-  const button = event.target.closest('.capture-action');
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-action]');
   if (!button) return;
-  const action = button.dataset.action;
-  if (action === 'file') {
-    fileInput.click();
-    return;
-  }
-  if (action === 'photo') {
-    photoInput.click();
-    return;
-  }
-  setCaptureMode(state.captureMode === action ? '' : action);
+  if (!(button.classList.contains('capture-action') || button.classList.contains('ghost-btn'))) return;
+  triggerCaptureAction(button.dataset.action);
+});
+
+variantRail.addEventListener('click', (event) => {
+  const button = event.target.closest('.variant-chip');
+  if (!button) return;
+  applyVariant(button.dataset.variant);
 });
 
 textForm.addEventListener('submit', async (event) => {
@@ -1275,6 +1355,8 @@ editorCloseBtn.addEventListener('click', hideEditor);
 editorSaveBtn.addEventListener('click', saveEditorChanges);
 
 async function init() {
+  state.variant = getVariantFromUrl();
+  applyVariant(state.variant, { skipHistory: true });
   const vaultState = await ensureVaultState();
   state.deviceId = vaultState.deviceId;
   state.activeVaultId = vaultState.activeVaultId;
@@ -1288,6 +1370,6 @@ async function init() {
 }
 
 init().catch((error) => {
-  appTitle.textContent = 'LifeOS Capture';
+  applyVariant(state.variant || 'signal', { skipHistory: true });
   syncStatus.textContent = 'Startup failed: ' + (error.message || error);
 });

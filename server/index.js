@@ -2,14 +2,24 @@ import http from 'node:http';
 import { join } from 'node:path';
 
 import { createRelayRequestHandler } from './relay-routes.js';
+import { createBlobRelayBackend } from './relay-blob-backend.js';
+import { createFileRelayBackend } from './relay-file-backend.js';
 import { createRelayStore } from './relay-store.js';
 
 function defaultStoreFile() {
   return join(process.cwd(), 'server', '.relay-store.json');
 }
 
+function createRelayBackend(options = {}) {
+  if (options.backend) return options.backend;
+  if (options.blob || process.env.BLOB_READ_WRITE_TOKEN) {
+    return createBlobRelayBackend(options.blob || {});
+  }
+  return createFileRelayBackend(options.filePath || defaultStoreFile());
+}
+
 export function createRelayServer(options = {}) {
-  const store = createRelayStore(options.filePath || defaultStoreFile());
+  const store = createRelayStore(createRelayBackend(options));
   return http.createServer(createRelayRequestHandler(store));
 }
 

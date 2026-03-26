@@ -1413,9 +1413,13 @@ suite('Source file integrity');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
   assert(indexHtml.includes('type="module"'), 'index.html uses type="module" for app.js');
   assert(indexHtml.includes('filter-bar'), 'index.html has filter-bar element');
-  assert(indexHtml.includes('how-to-use'), 'index.html has how-to-use element');
+  assert(indexHtml.includes('help-btn'), 'index.html has help button');
+  assert(indexHtml.includes('sync-btn'), 'index.html has sync button');
+  assert(indexHtml.includes('help-modal'), 'index.html has help modal');
+  assert(indexHtml.includes('sync-modal'), 'index.html has sync modal');
 
-  assert(appCss.includes('#how-to-use'), 'app.css defines #how-to-use');
+  assert(appCss.includes('.app-modal'), 'app.css defines app modal shell');
+  assert(appCss.includes('.header-icon-btn'), 'app.css defines header icon buttons');
   assert(appCss.includes('[data-theme="aurora"]'), 'app.css defines aurora theme');
   assert(appCss.includes('[data-theme="frost"]'), 'app.css defines frost theme');
   assert(appCss.includes('[data-theme="neon"]'), 'app.css defines neon theme');
@@ -1423,6 +1427,7 @@ suite('Source file integrity');
   assert(appCss.includes('#theme-picker'), 'app.css defines #theme-picker');
   assert(indexHtml.includes('theme-picker'), 'index.html has theme-picker');
   assert(appJs.includes('applyTheme'), 'app.js defines applyTheme');
+  assert(appJs.includes('scheduleAutoPush'), 'app.js defines auto-sync scheduling');
   assert(appJs.includes('voice-notes-theme'), 'app.js uses localStorage key for theme');
 }
 
@@ -1484,10 +1489,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v26'), 'index.html version is v26');
+  assert(indexHtml.includes('v28'), 'index.html version is v28');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v26'), 'sw.js cache version is v26');
+  assert(swJs.includes('voice-notes-v28'), 'sw.js cache version is v28');
   assert(swJs.includes("url.pathname.startsWith('/api/')"), 'sw.js skips caching api requests');
 }
 

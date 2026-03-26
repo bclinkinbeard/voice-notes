@@ -1,6 +1,5 @@
 'use strict';
 
-import './app.css';
 import { buildProjection } from './projections.js';
 import { executeQuery } from './query.js';
 import {

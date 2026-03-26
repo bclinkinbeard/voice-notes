@@ -14,6 +14,7 @@ import { sanitizeSyncSnapshot } from './sync-snapshot.js';
 // --- Constants ---
 
 const DEFAULT_LIST_ID = 'default';
+const DB_VERSION = 3;
 const MODE_DESCRIPTIONS = {
   capture: 'Record and save voice notes.',
   accomplish: 'Track tasks with checkboxes and reordering.'
@@ -99,7 +100,7 @@ function openDB() {
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open('voiceNotesDB', 2);
+    const request = indexedDB.open('voiceNotesDB', DB_VERSION);
 
     request.onupgradeneeded = (e) => {
       const db = e.target.result;

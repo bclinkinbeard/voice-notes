@@ -1,4 +1,4 @@
-const CACHE_NAME = 'voice-notes-v24';
+const CACHE_NAME = 'voice-notes-v26';
 const SHELL = [
   './',
   './app.css',
@@ -27,8 +27,34 @@ self.addEventListener('activate', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  e.respondWith(
-    caches.match(e.request)
-      .then((cached) => cached || fetch(e.request))
-  );
+  if (e.request.method !== 'GET') {
+    return;
+  }
+
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+
+    try {
+      const response = await fetch(e.request);
+      if (response && response.ok) {
+        cache.put(e.request, response.clone());
+      }
+      return response;
+    } catch (error) {
+      const cached = await cache.match(e.request);
+      if (cached) {
+        return cached;
+      }
+      throw error;
+    }
+  })());
 });

@@ -1443,7 +1443,7 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes('showListDetailView'), 'app.js defines showListDetailView');
   assert(appJs.includes("DEFAULT_LIST_ID"), 'app.js defines DEFAULT_LIST_ID');
   assert(appJs.includes('migrateNotesToDefaultList'), 'app.js defines migration function');
-  assert(appJs.includes("voiceNotesDB', 2"), 'IndexedDB version is 2');
+  assert(appJs.includes('const DB_VERSION = 3;'), 'IndexedDB version is 3');
   assert(appJs.includes("objectStore('lists'"), 'app.js uses lists object store');
   assert(appJs.includes('listId'), 'notes reference listId');
   assert(appJs.includes('completed'), 'notes have completed field');
@@ -1484,10 +1484,11 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v24'), 'index.html version is v24');
+  assert(indexHtml.includes('v26'), 'index.html version is v26');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v24'), 'sw.js cache version is v24');
+  assert(swJs.includes('voice-notes-v26'), 'sw.js cache version is v26');
+  assert(swJs.includes("url.pathname.startsWith('/api/')"), 'sw.js skips caching api requests');
 }
 
 } // end runTests

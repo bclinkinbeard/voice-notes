@@ -9,6 +9,8 @@
   --accent: #e94560;
   --accent-glow: rgba(233, 69, 96, 0.3);
   --accent-bg: rgba(233, 69, 96, 0.15);
+  --status-connected: #22c55e;
+  --status-disconnected: #ef4444;
   --text: #eee;
   --text-muted: #999;
   --danger: #ff8a80;
@@ -265,7 +267,7 @@ header {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.15s, border-color 0.15s, background 0.15s;
+  transition: transform 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
   min-height: 30px;
 }
 
@@ -274,24 +276,11 @@ header {
 }
 
 #sync-btn {
-  position: relative;
+  color: var(--status-disconnected);
 }
 
 #sync-btn[data-connected="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-#sync-btn[data-connected="true"]::after {
-  content: '';
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 2px var(--bg);
+  color: var(--status-connected);
 }
 
 #app-version {

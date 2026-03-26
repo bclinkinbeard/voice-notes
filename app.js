@@ -9,7 +9,7 @@ import {
   pullSnapshot,
   pushSnapshot,
 } from './sync-client.js';
-import { sanitizeSyncSnapshot } from './sync-snapshot.js';
+import { mergeSyncData } from './sync-snapshot.js';
 
 // --- Constants ---
 
@@ -313,27 +313,26 @@ function exportAllData() {
   }));
 }
 
-function replaceAllData(snapshot) {
-  const data = sanitizeSyncSnapshot(snapshot);
+function mergeAllData(snapshot) {
+  return exportAllData().then((localData) => {
+    const merged = mergeSyncData(localData, snapshot);
 
-  return openDB().then((db) => {
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['lists', 'notes'], 'readwrite');
-      const listsStore = tx.objectStore('lists');
-      const notesStore = tx.objectStore('notes');
+    return openDB().then((db) => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(['lists', 'notes'], 'readwrite');
+        const listsStore = tx.objectStore('lists');
+        const notesStore = tx.objectStore('notes');
 
-      listsStore.clear();
-      notesStore.clear();
+        for (const list of merged.lists) {
+          listsStore.put(list);
+        }
+        for (const note of merged.notes) {
+          notesStore.put(note);
+        }
 
-      for (const list of data.lists) {
-        listsStore.put(list);
-      }
-      for (const note of data.notes) {
-        notesStore.put(note);
-      }
-
-      tx.oncomplete = () => resolve(data);
-      tx.onerror = () => reject(tx.error);
+        tx.oncomplete = () => resolve(merged);
+        tx.onerror = () => reject(tx.error);
+      });
     });
   });
 }
@@ -438,6 +437,8 @@ function updateCloudSyncUi() {
 
   if (syncBtn) {
     syncBtn.dataset.connected = connected ? 'true' : 'false';
+    syncBtn.dataset.busy = syncBusy ? 'true' : 'false';
+    syncBtn.setAttribute('aria-busy', syncBusy ? 'true' : 'false');
   }
 
   if (cloudUserDetails) {
@@ -570,34 +571,75 @@ async function pullFromCloud() {
     return;
   }
 
-  if (!confirm('Replace all local lists and notes with the cloud snapshot?')) {
-    return;
-  }
-
   syncBusy = true;
   clearAutoPushQueue();
   updateCloudSyncUi();
 
   try {
-    setCloudMessage('Downloading snapshot...');
+    setCloudMessage('Merging cloud snapshot...');
     const pulled = await pullSnapshot(syncKey);
     if (!pulled.hasSnapshot || !pulled.snapshot) {
       setCloudMessage('No cloud snapshot found for this sync key.');
       return;
     }
 
-    const snapshot = sanitizeSyncSnapshot(pulled.snapshot);
-
     stopCurrentPlayback();
-    await replaceAllData(snapshot);
+    const merged = await mergeAllData(pulled.snapshot);
 
     cloudMeta = pulled.meta || null;
     setSyncMetaIso(SYNC_META_KEYS.lastCloudPullAt, new Date().toISOString());
     updateCloudSyncUi();
-    setCloudMessage(`Pull complete. Loaded ${snapshot.lists.length} lists and ${snapshot.notes.length} notes.`);
-    showListsView();
+    setCloudMessage(
+      `Pull complete. Added ${merged.stats.addedLists} lists and ${merged.stats.addedNotes} notes from cloud.`
+    );
+    if (currentListId) {
+      const currentList = await getList(currentListId);
+      if (currentList) {
+        await renderListDetail(currentListId);
+      } else {
+        showListsView();
+      }
+    } else {
+      await renderLists();
+    }
   } catch (error) {
     setCloudMessage(error.message || 'Pull failed.', true);
+  } finally {
+    syncBusy = false;
+    updateCloudSyncUi();
+  }
+}
+
+async function pullFromCloudOnLoad() {
+  if (!syncKey || syncBusy) return;
+
+  syncBusy = true;
+  updateCloudSyncUi();
+
+  try {
+    const pulled = await pullSnapshot(syncKey);
+    cloudMeta = pulled.meta || null;
+
+    if (!pulled.hasSnapshot || !pulled.snapshot) {
+      setCloudMessage('');
+      return;
+    }
+
+    await mergeAllData(pulled.snapshot);
+    setSyncMetaIso(SYNC_META_KEYS.lastCloudPullAt, new Date().toISOString());
+
+    if (currentListId) {
+      const currentList = await getList(currentListId);
+      if (currentList) {
+        await renderListDetail(currentListId);
+      } else {
+        showListsView();
+      }
+    } else {
+      await renderLists();
+    }
+
+    setCloudMessage('');
   } finally {
     syncBusy = false;
     updateCloudSyncUi();
@@ -1840,9 +1882,15 @@ if ('serviceWorker' in navigator) {
 
 // --- Initialization ---
 
+showListsView();
 syncKey = normalizeSyncKey(localStorage.getItem(SYNC_KEY_STORAGE) || '');
 updateCloudSyncUi();
-refreshCloudSync().catch((error) => {
-  setCloudMessage(error.message || 'Cloud sync unavailable.', true);
-});
-showListsView();
+if (syncKey) {
+  pullFromCloudOnLoad().catch((error) => {
+    setCloudMessage(error.message || 'Cloud sync unavailable.', true);
+  });
+} else {
+  refreshCloudSync().catch((error) => {
+    setCloudMessage(error.message || 'Cloud sync unavailable.', true);
+  });
+}

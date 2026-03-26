@@ -296,6 +296,20 @@ header {
   stroke: var(--status-connected);
 }
 
+#sync-btn[data-busy="true"] svg {
+  animation: sync-gear-spin 0.9s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes sync-gear-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 #app-version {
   font-size: 0.7rem;
   color: var(--text-muted);

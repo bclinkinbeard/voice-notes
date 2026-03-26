@@ -119,7 +119,180 @@ function sanitizeSyncSnapshot(snapshot) {
   };
 }
 
+function toTimestamp(value) {
+  const time = Date.parse(String(value || ''));
+  return Number.isFinite(time) ? time : null;
+}
+
+function pickEarlierIso(left, right) {
+  const leftTime = toTimestamp(left);
+  const rightTime = toTimestamp(right);
+
+  if (leftTime === null) return right || new Date().toISOString();
+  if (rightTime === null) return left;
+  return leftTime <= rightTime ? left : right;
+}
+
+function mergeStringArrays(...values) {
+  const merged = [];
+  const seen = new Set();
+
+  for (const value of values) {
+    for (const entry of sanitizeStringArray(value)) {
+      if (seen.has(entry)) continue;
+      seen.add(entry);
+      merged.push(entry);
+    }
+  }
+
+  return merged;
+}
+
+function normalizeLocalListRecord(list) {
+  const sanitized = sanitizeListRecord(list);
+  return {
+    ...list,
+    ...sanitized,
+  };
+}
+
+function normalizeLocalNoteRecord(note) {
+  const sanitized = sanitizeNoteRecord(note);
+  return {
+    ...note,
+    ...sanitized,
+  };
+}
+
+function mergeNoteRecords(localNote, remoteNote) {
+  const local = localNote ? normalizeLocalNoteRecord(localNote) : null;
+  const remote = remoteNote ? sanitizeNoteRecord(remoteNote) : null;
+
+  if (!local && !remote) return null;
+  if (!local) return { ...remote };
+  if (!remote) return { ...local };
+
+  return {
+    ...remote,
+    ...local,
+    id: local.id,
+    listId: local.listId || remote.listId,
+    createdAt: pickEarlierIso(local.createdAt, remote.createdAt),
+    transcription: local.transcription || remote.transcription,
+    duration: Math.max(local.duration || 0, remote.duration || 0),
+    completed: Boolean(local.completed || remote.completed),
+    categories: mergeStringArrays(local.categories, remote.categories),
+    sentiment: sanitizeSentiment(local.sentiment) || sanitizeSentiment(remote.sentiment),
+  };
+}
+
+function mergeListRecords(localList, remoteList, noteIds) {
+  const local = localList ? normalizeLocalListRecord(localList) : null;
+  const remote = remoteList ? sanitizeListRecord(remoteList) : null;
+  const fallback = local || remote;
+
+  if (!fallback) return null;
+
+  return {
+    ...(remote || {}),
+    ...(local || {}),
+    id: fallback.id,
+    name: (local && local.name) || (remote && remote.name) || 'Untitled List',
+    mode: (local && local.mode) || (remote && remote.mode) || 'capture',
+    createdAt: pickEarlierIso(local && local.createdAt, remote && remote.createdAt),
+    noteOrder: mergeStringArrays(
+      local && local.noteOrder,
+      remote && remote.noteOrder,
+      noteIds
+    ),
+  };
+}
+
+function mergeSyncData(localData, remoteSnapshot) {
+  const localLists = Array.isArray(localData && localData.lists) ? localData.lists : [];
+  const localNotes = Array.isArray(localData && localData.notes) ? localData.notes : [];
+  const remoteData = sanitizeSyncSnapshot(remoteSnapshot);
+
+  const localListMap = new Map(localLists.map((list) => [String(list.id || '').trim(), list]).filter(([id]) => id));
+  const localNoteMap = new Map(localNotes.map((note) => [String(note.id || '').trim(), note]).filter(([id]) => id));
+  const remoteListMap = new Map(remoteData.lists.map((list) => [list.id, list]));
+  const remoteNoteMap = new Map(remoteData.notes.map((note) => [note.id, note]));
+
+  const mergedNotes = [];
+  const noteIdsByList = new Map();
+  const noteIdsByListSorted = new Map();
+  const noteIdsByListBuckets = new Map();
+  const noteIds = new Set([...localNoteMap.keys(), ...remoteNoteMap.keys()]);
+
+  for (const noteId of noteIds) {
+    const mergedNote = mergeNoteRecords(localNoteMap.get(noteId), remoteNoteMap.get(noteId));
+    if (!mergedNote) continue;
+    mergedNotes.push(mergedNote);
+
+    if (!noteIdsByListBuckets.has(mergedNote.listId)) {
+      noteIdsByListBuckets.set(mergedNote.listId, []);
+    }
+    noteIdsByListBuckets.get(mergedNote.listId).push(mergedNote);
+  }
+
+  for (const [listId, notes] of noteIdsByListBuckets.entries()) {
+    notes.sort((left, right) => {
+      const leftTime = toTimestamp(left.createdAt) || 0;
+      const rightTime = toTimestamp(right.createdAt) || 0;
+      return rightTime - leftTime;
+    });
+    noteIdsByListSorted.set(listId, notes.map((note) => note.id));
+    noteIdsByList.set(listId, new Set(notes.map((note) => note.id)));
+  }
+
+  const mergedLists = [];
+  const listIds = new Set([
+    ...localListMap.keys(),
+    ...remoteListMap.keys(),
+    ...noteIdsByList.keys(),
+  ]);
+
+  for (const listId of listIds) {
+    const mergedList = mergeListRecords(
+      localListMap.get(listId),
+      remoteListMap.get(listId),
+      noteIdsByListSorted.get(listId) || []
+    );
+    if (!mergedList) continue;
+    mergedLists.push(mergedList);
+  }
+
+  const knownListIds = new Set(mergedLists.map((list) => list.id));
+  for (const note of mergedNotes) {
+    if (knownListIds.has(note.listId)) continue;
+    mergedLists.push({
+      id: note.listId,
+      name: 'Untitled List',
+      mode: 'capture',
+      createdAt: note.createdAt || new Date().toISOString(),
+      noteOrder: [note.id],
+    });
+    knownListIds.add(note.listId);
+  }
+
+  const stats = {
+    addedLists: remoteData.lists.filter((list) => !localListMap.has(list.id)).length,
+    addedNotes: remoteData.notes.filter((note) => !localNoteMap.has(note.id)).length,
+    mergedLists: remoteData.lists.filter((list) => localListMap.has(list.id)).length,
+    mergedNotes: remoteData.notes.filter((note) => localNoteMap.has(note.id)).length,
+  };
+
+  return {
+    version: remoteData.version,
+    exportedAt: remoteData.exportedAt,
+    lists: mergedLists,
+    notes: mergedNotes,
+    stats,
+  };
+}
+
 export {
+  mergeSyncData,
   normalizeAudioHash,
   SYNC_KEY_HEADER,
   SYNC_SNAPSHOT_VERSION,

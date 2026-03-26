@@ -891,11 +891,19 @@ function cleanFillersFromTranscription(text) {
   return text.replace(/\b[Uu]mm?\b/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
+function capitalizeFirstLetter(text) {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 // --- Transcription Splitting ---
 
 function splitTranscriptionOnAnd(text) {
   if (!text) return [text];
-  const parts = text.split(/\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+  const parts = text
+    .split(/\s+and\s+/i)
+    .map((s) => capitalizeFirstLetter(s.trim()))
+    .filter(Boolean);
   return parts.length > 0 ? parts : [text];
 }
 

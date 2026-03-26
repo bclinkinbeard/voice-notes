@@ -122,10 +122,18 @@ function cleanFillersFromTranscription(text) {
   return text.replace(/\b[Uu]mm?\b/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
+function capitalizeFirstLetter(text) {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 // Replicate splitTranscriptionOnAnd from app.js
 function splitTranscriptionOnAnd(text) {
   if (!text) return [text];
-  const parts = text.split(/\s+and\s+/i).map((s) => s.trim()).filter(Boolean);
+  const parts = text
+    .split(/\s+and\s+/i)
+    .map((s) => capitalizeFirstLetter(s.trim()))
+    .filter(Boolean);
   return parts.length > 0 ? parts : [text];
 }
 
@@ -1212,18 +1220,18 @@ assertEqual(cleanFillersFromTranscription(null), null, 'null returns null');
 assertEqual(cleanFillersFromTranscription('yummy drums'), 'yummy drums', 'does not remove umm within words');
 
 suite('splitTranscriptionOnAnd — basic splitting');
-assertDeepEqual(splitTranscriptionOnAnd('meat and potatoes and cheese'), ['meat', 'potatoes', 'cheese'], 'splits three items on "and"');
-assertDeepEqual(splitTranscriptionOnAnd('apples and oranges'), ['apples', 'oranges'], 'splits two items');
-assertDeepEqual(splitTranscriptionOnAnd('just one item'), ['just one item'], 'no "and" returns single item');
-assertDeepEqual(splitTranscriptionOnAnd('bread AND butter'), ['bread', 'butter'], 'case-insensitive split');
-assertDeepEqual(splitTranscriptionOnAnd('salt And pepper'), ['salt', 'pepper'], 'mixed-case "And" splits');
+assertDeepEqual(splitTranscriptionOnAnd('meat and potatoes and cheese'), ['Meat', 'Potatoes', 'Cheese'], 'splits three items on "and" and capitalizes each item');
+assertDeepEqual(splitTranscriptionOnAnd('apples and oranges'), ['Apples', 'Oranges'], 'splits two items and capitalizes each item');
+assertDeepEqual(splitTranscriptionOnAnd('just one item'), ['Just one item'], 'single item is capitalized');
+assertDeepEqual(splitTranscriptionOnAnd('bread AND butter'), ['Bread', 'Butter'], 'case-insensitive split');
+assertDeepEqual(splitTranscriptionOnAnd('salt And pepper'), ['Salt', 'Pepper'], 'mixed-case "And" splits');
 assertDeepEqual(splitTranscriptionOnAnd(''), [''], 'empty string returns array with empty string');
 assertDeepEqual(splitTranscriptionOnAnd(null), [null], 'null returns array with null');
 assertDeepEqual(splitTranscriptionOnAnd(undefined), [undefined], 'undefined returns array with undefined');
-assertDeepEqual(splitTranscriptionOnAnd('band together'), ['band together'], 'does not split on "and" within words');
-assertDeepEqual(splitTranscriptionOnAnd('candy and sandwiches'), ['candy', 'sandwiches'], 'splits even when surrounding words contain "and"');
-assertDeepEqual(splitTranscriptionOnAnd('a  and  b'), ['a', 'b'], 'handles multiple spaces around "and"');
-assertDeepEqual(splitTranscriptionOnAnd('first and second and third and fourth'), ['first', 'second', 'third', 'fourth'], 'splits four items');
+assertDeepEqual(splitTranscriptionOnAnd('band together'), ['Band together'], 'does not split on "and" within words');
+assertDeepEqual(splitTranscriptionOnAnd('candy and sandwiches'), ['Candy', 'Sandwiches'], 'splits even when surrounding words contain "and"');
+assertDeepEqual(splitTranscriptionOnAnd('a  and  b'), ['A', 'B'], 'handles multiple spaces around "and"');
+assertDeepEqual(splitTranscriptionOnAnd('first and second and third and fourth'), ['First', 'Second', 'Third', 'Fourth'], 'splits four items');
 
 suite('Note card — text-only note (no audioBlob)');
 {

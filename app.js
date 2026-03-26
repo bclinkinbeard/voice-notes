@@ -671,11 +671,19 @@ function stopTimer() {
 
 // --- Waveform Visualization ---
 
-function startWaveform(stream) {
+async function startWaveform(stream) {
   if (!waveformCtx) return;
 
   if (!audioContext || audioContext.state === 'closed') {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  if (audioContext.state === 'suspended') {
+    try {
+      await audioContext.resume();
+    } catch (error) {
+      console.warn('Unable to resume audio context for waveform rendering.', error);
+    }
   }
   analyser = audioContext.createAnalyser();
   analyser.fftSize = 2048;
@@ -692,10 +700,10 @@ function startWaveform(stream) {
 
   waveformCanvas.width = W * dpr;
   waveformCanvas.height = H * dpr;
-  ctx.scale(dpr, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const computedStyle = getComputedStyle(document.documentElement);
-  const accentColor = computedStyle.getPropertyValue('--accent').trim();
+  const accentColor = computedStyle.getPropertyValue('--accent').trim() || '#6d5cff';
   const waveformFillColor = computedStyle.getPropertyValue('--waveform-fill').trim() || 'rgba(26, 26, 46, 0.3)';
 
   function draw() {
@@ -898,7 +906,7 @@ async function startRecording() {
   mediaRecorder.start(100);
   recordingStartTime = Date.now();
   startTimer();
-  startWaveform(stream);
+  await startWaveform(stream);
   startTranscription();
 }
 

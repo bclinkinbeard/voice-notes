@@ -17,7 +17,7 @@
       <button id="back-btn" class="hidden" type="button" aria-label="Back">&#8592;</button>
       <h1>Voice Notes</h1>
     </div>
-    <p id="app-version">v23</p>
+    <p id="app-version">v24</p>
     <div id="theme-picker">
       <button type="button" class="theme-swatch active" data-theme-value="" aria-label="Midnight theme" style="background:#e94560"></button>
       <button type="button" class="theme-swatch" data-theme-value="aurora" aria-label="Aurora theme" style="background:linear-gradient(135deg,#f4845f,#f9c74f)"></button>
@@ -34,9 +34,47 @@
         <p><strong>Capture mode</strong> &mdash; Record voice notes with audio playback. Great for memos, thoughts, and anything you want to listen back to.</p>
         <p><strong>Accomplish mode</strong> &mdash; Speak your to-do items and they become a checklist. Say "and" between items to create multiple entries at once (e.g. "milk and eggs and bread"). Audio is not saved &mdash; only the text.</p>
         <p><strong>Smart tagging</strong> &mdash; Notes are automatically categorized (todo, work, health, etc.) and analyzed for sentiment. Use the filter chips to narrow down notes by category.</p>
-        <p>Tap <strong>+ New List</strong> to get started, then tap the record button to capture a note. Everything is stored on your device &mdash; no account or internet required.</p>
+        <p>Tap <strong>+ New List</strong> to get started, then tap the record button to capture a note. Everything works fully on-device, and cloud sync is optional if you want the same notes on multiple devices.</p>
       </div>
     </details>
+    <section id="sync-panel" aria-labelledby="sync-panel-title">
+      <div class="sync-panel-header">
+        <div>
+          <h2 id="sync-panel-title">Sync Across Devices</h2>
+          <p id="cloud-user-details">Enter the same shared key on each device to sync lists and note text. Recordings stay local for now.</p>
+        </div>
+        <span id="cloud-auth-status">Not connected</span>
+      </div>
+      <label class="sync-label" for="cloud-sync-key">Shared sync key</label>
+      <div class="sync-key-row">
+        <input id="cloud-sync-key" type="password" autocomplete="off" placeholder="At least 8 characters">
+        <button id="cloud-connect-key" type="button">Connect</button>
+        <button id="cloud-clear-key" type="button">Clear</button>
+      </div>
+      <div class="sync-status-grid">
+        <div class="sync-status-card">
+          <span>Cloud snapshot</span>
+          <strong id="cloud-snapshot-updated">Never</strong>
+        </div>
+        <div class="sync-status-card">
+          <span>Snapshot version</span>
+          <strong id="cloud-snapshot-version">None</strong>
+        </div>
+        <div class="sync-status-card">
+          <span>Last pull</span>
+          <strong id="sync-last-cloud-pull">Never</strong>
+        </div>
+        <div class="sync-status-card">
+          <span>Last push</span>
+          <strong id="sync-last-cloud-push">Never</strong>
+        </div>
+      </div>
+      <div class="sync-actions">
+        <button id="cloud-pull" type="button">Pull From Cloud</button>
+        <button id="cloud-push" type="button">Push To Cloud</button>
+      </div>
+      <p id="cloud-sync-message" aria-live="polite"></p>
+    </section>
     <div id="lists-header">
       <h2>Your Lists</h2>
       <button id="new-list-btn" type="button">+ New List</button>

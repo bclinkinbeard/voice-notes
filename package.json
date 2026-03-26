@@ -5,14 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:sync": "vercel dev --listen 4173",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tests.js"
+    "preview:url": "node scripts/vercel-preview-url.mjs",
+    "test": "node tests.js && node --test tests/node/*.test.js"
   },
   "devDependencies": {
     "vite": "^6.0.0"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.4.0"
+    "@huggingface/transformers": "^3.4.0",
+    "@vercel/blob": "^2.3.1",
+    "vercel": "^50.37.1"
   }
 }

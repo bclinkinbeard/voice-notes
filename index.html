@@ -3,169 +3,91 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#11171c">
+  <meta name="theme-color" content="#1a1a2e">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>LifeOS Capture</title>
+  <title>Voice Notes</title>
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <div id="app-shell">
-    <header id="topbar">
-      <div>
-        <p id="eyebrow">Append-first LifeOS</p>
-        <h1 id="app-title">LifeOS Capture</h1>
-        <p id="app-version">v24</p>
+  <header>
+    <div id="header-bar">
+      <button id="back-btn" class="hidden" type="button" aria-label="Back">&#8592;</button>
+      <h1>Voice Notes</h1>
+    </div>
+    <p id="app-version">v23</p>
+    <div id="theme-picker">
+      <button type="button" class="theme-swatch active" data-theme-value="" aria-label="Midnight theme" style="background:#e94560"></button>
+      <button type="button" class="theme-swatch" data-theme-value="aurora" aria-label="Aurora theme" style="background:linear-gradient(135deg,#f4845f,#f9c74f)"></button>
+      <button type="button" class="theme-swatch" data-theme-value="frost" aria-label="Frost theme" style="background:#2563eb"></button>
+      <button type="button" class="theme-swatch" data-theme-value="neon" aria-label="Neon theme" style="background:#00e5ff"></button>
+    </div>
+  </header>
+
+  <!-- Lists View -->
+  <section id="lists-view">
+    <details id="how-to-use">
+      <summary>How to use Voice Notes</summary>
+      <div id="how-to-use-content">
+        <p><strong>Capture mode</strong> &mdash; Record voice notes with audio playback. Great for memos, thoughts, and anything you want to listen back to.</p>
+        <p><strong>Accomplish mode</strong> &mdash; Speak your to-do items and they become a checklist. Say "and" between items to create multiple entries at once (e.g. "milk and eggs and bread"). Audio is not saved &mdash; only the text.</p>
+        <p><strong>Smart tagging</strong> &mdash; Notes are automatically categorized (todo, work, health, etc.) and analyzed for sentiment. Use the filter chips to narrow down notes by category.</p>
+        <p>Tap <strong>+ New List</strong> to get started, then tap the record button to capture a note. Everything is stored on your device &mdash; no account or internet required.</p>
       </div>
-      <div id="topbar-actions">
-        <button id="vault-pill" type="button">Vault</button>
-        <button id="sync-btn" type="button">Sync</button>
-        <button id="settings-btn" type="button">Vaults</button>
+    </details>
+    <div id="lists-header">
+      <h2>Your Lists</h2>
+      <button id="new-list-btn" type="button">+ New List</button>
+    </div>
+    <div id="lists-container"></div>
+    <p id="lists-empty-state" class="hidden">No lists yet. Create one to start recording.</p>
+  </section>
+
+  <!-- List Detail View -->
+  <section id="list-detail-view" class="hidden">
+    <div id="list-detail-header">
+      <div id="list-detail-info">
+        <h2 id="list-detail-name"></h2>
+        <span id="list-detail-mode"></span>
       </div>
-    </header>
-
-    <section id="hero">
-      <p id="hero-copy">Capture first. Interpret later. Search your life as a replayable stream of entries, facts, and evolving entities.</p>
-      <div id="tab-row">
-        <button id="tab-inbox" class="tab-btn active" type="button">Inbox</button>
-        <button id="tab-ask" class="tab-btn" type="button">Ask</button>
+      <div id="list-detail-actions">
+        <button id="rename-list-btn" type="button">Rename</button>
+        <button id="delete-list-btn" type="button">Delete</button>
       </div>
-    </section>
+    </div>
 
-    <main id="views">
-      <section id="inbox-view">
-        <section id="capture-shell">
-          <div id="capture-actions">
-            <button class="capture-action" data-action="voice" type="button">Voice</button>
-            <button class="capture-action" data-action="text" type="button">Quick Note</button>
-            <button class="capture-action" data-action="link" type="button">Paste Link</button>
-            <button class="capture-action" data-action="file" type="button">File</button>
-            <button class="capture-action" data-action="photo" type="button">Photo</button>
-          </div>
-
-          <div id="capture-panel" class="hidden">
-            <section id="voice-panel" class="capture-mode hidden">
-              <main id="recorder">
-                <div id="timer">0:00</div>
-                <canvas id="waveform" width="320" height="72"></canvas>
-                <button id="record-btn" type="button" aria-label="Record">
-                  <span id="record-icon"></span>
-                </button>
-                <p id="record-hint">Tap to record</p>
-              </main>
-            </section>
-
-            <form id="text-capture-form" class="capture-mode hidden">
-              <label class="stacked-label" for="text-capture-input">Quick note</label>
-              <textarea id="text-capture-input" rows="5" placeholder="Drop in a thought, action, observation, or anything worth replaying later."></textarea>
-              <button class="primary-btn" type="submit">Save entry</button>
-            </form>
-
-            <form id="link-capture-form" class="capture-mode hidden">
-              <label class="stacked-label" for="link-capture-url">Link</label>
-              <input id="link-capture-url" type="url" placeholder="https://example.com/article">
-              <label class="stacked-label" for="link-capture-note">Why it matters</label>
-              <textarea id="link-capture-note" rows="4" placeholder="Optional note, context, or takeaway."></textarea>
-              <button class="primary-btn" type="submit">Save link</button>
-            </form>
-          </div>
-        </section>
-
-        <input id="file-input" type="file" hidden>
-        <input id="photo-input" type="file" accept="image/*" capture="environment" hidden>
-
-        <section id="focus-sections">
-          <div class="focus-card">
-            <div class="focus-head">
-              <h2>Current Projects</h2>
-              <span>Generated from captured facts</span>
-            </div>
-            <div id="active-projects" class="chip-rail"></div>
-          </div>
-          <div class="focus-card">
-            <div class="focus-head">
-              <h2>Topics In Motion</h2>
-              <span>Open graph, not a fixed taxonomy</span>
-            </div>
-            <div id="active-topics" class="chip-rail"></div>
-          </div>
-        </section>
-
-        <section id="timeline-section">
-          <div class="section-head">
-            <div>
-              <p class="section-kicker">Recent stream</p>
-              <h2>Inbox Timeline</h2>
-            </div>
-          </div>
-          <div id="timeline-list"></div>
-          <p id="timeline-empty">No entries yet. Capture a voice note, quick text, file, link, or photo to start building your vault.</p>
-        </section>
-      </section>
-
-      <section id="ask-view" class="hidden">
-        <section id="ask-shell">
-          <form id="ask-form">
-            <label class="stacked-label" for="ask-input">Ask the vault</label>
-            <textarea id="ask-input" rows="4" placeholder="What are my current projects? What are we waiting on with the bathroom remodel? Show me entries about nutrition."></textarea>
-            <button class="primary-btn" type="submit">Run query</button>
-          </form>
-          <div id="ask-answer" class="answer-card">Ask about projects, blockers, or topics to pull structured views from the event log.</div>
-          <div id="follow-ups" class="follow-up-row"></div>
-          <div id="ask-results"></div>
-        </section>
-      </section>
+    <main id="recorder">
+      <div id="timer">0:00</div>
+      <canvas id="waveform" width="280" height="64"></canvas>
+      <button id="record-btn" type="button" aria-label="Record">
+        <span id="record-icon"></span>
+      </button>
+      <p id="record-hint">Tap to record</p>
     </main>
-  </div>
 
-  <div id="entity-drawer" class="hidden">
-    <div id="entity-backdrop"></div>
-    <aside id="entity-panel">
-      <button id="entity-close-btn" type="button">Close</button>
-      <h2 id="entity-title">Entity</h2>
-      <div id="entity-meta" class="meta-row"></div>
-      <div id="entity-facts"></div>
-      <div id="entity-entries"></div>
-    </aside>
-  </div>
+    <div id="filter-bar" class="hidden"></div>
+    <div id="list-notes"></div>
+    <p id="list-empty-state" class="hidden">No notes yet. Tap to record one.</p>
+  </section>
 
-  <div id="vault-sheet" class="hidden">
-    <div id="vault-backdrop"></div>
-    <aside id="vault-panel">
-      <button id="vault-close-btn" type="button">Close</button>
-      <h2>Vaults & Sync</h2>
-      <label class="stacked-label" for="vault-selector">Active vault</label>
-      <select id="vault-selector"></select>
-      <label class="stacked-label" for="vault-name-input">Vault name</label>
-      <input id="vault-name-input" type="text" placeholder="Personal Vault">
-      <label class="stacked-label" for="relay-url-input">Relay URL</label>
-      <input id="relay-url-input" type="url" placeholder="https://relay.example.com">
-      <div class="inline-actions">
-        <button id="save-vault-btn" class="primary-btn" type="button">Save vault</button>
-        <button id="create-vault-btn" type="button">New vault</button>
+  <!-- Create/Edit List Modal -->
+  <div id="list-modal" class="hidden">
+    <div id="list-modal-backdrop"></div>
+    <div id="list-modal-content">
+      <h2 id="list-modal-title">New List</h2>
+      <input id="list-name-input" type="text" placeholder="List name" maxlength="50" autocomplete="off">
+      <div id="mode-selector">
+        <button type="button" data-mode="capture" class="mode-btn active">Capture</button>
+        <button type="button" data-mode="accomplish" class="mode-btn">Accomplish</button>
       </div>
-
-      <label class="stacked-label" for="invite-output">Invite code</label>
-      <textarea id="invite-output" rows="4" readonly placeholder="Generate an invite when you want to share this vault."></textarea>
-      <button id="generate-invite-btn" type="button">Generate invite</button>
-
-      <label class="stacked-label" for="invite-input">Join from invite</label>
-      <textarea id="invite-input" rows="4" placeholder="Paste a shared-key vault invite here."></textarea>
-      <button id="apply-invite-btn" type="button">Join vault</button>
-      <p id="sync-status">Local-only mode. Add a relay URL when you want shared-key sync.</p>
-    </aside>
-  </div>
-
-  <div id="editor-modal" class="hidden">
-    <div id="editor-backdrop"></div>
-    <aside id="editor-panel">
-      <button id="editor-close-btn" type="button">Close</button>
-      <h2>Edit entry text</h2>
-      <textarea id="editor-input" rows="8" placeholder="Refine the text without mutating history: saving creates a new text extraction event."></textarea>
-      <button id="editor-save-btn" class="primary-btn" type="button">Append correction</button>
-    </aside>
+      <p id="mode-description">Record and save voice notes.</p>
+      <div id="list-modal-actions">
+        <button id="modal-cancel-btn" type="button">Cancel</button>
+        <button id="modal-save-btn" type="button">Save</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/app.js"></script>

@@ -269,6 +269,7 @@ header {
   justify-content: center;
   transition: transform 0.15s, border-color 0.15s, background 0.15s, color 0.15s;
   min-height: 30px;
+  line-height: 1;
 }
 
 .header-icon-btn:active {
@@ -279,8 +280,20 @@ header {
   color: var(--status-disconnected);
 }
 
+#sync-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  flex: none;
+  stroke: var(--status-disconnected);
+}
+
 #sync-btn[data-connected="true"] {
   color: var(--status-connected);
+}
+
+#sync-btn[data-connected="true"] svg {
+  stroke: var(--status-connected);
 }
 
 #app-version {

@@ -15,6 +15,15 @@ import { mergeSyncData } from './sync-snapshot.js';
 const DEFAULT_LIST_ID = 'default';
 const DB_VERSION = 4;
 const AUTO_PUSH_DELAY_MS = 1200;
+const LAUNCH_QUERY_KEYS = [
+  'intent',
+  'entry',
+  'list',
+  'share-target',
+  'share-title',
+  'share-text',
+  'share-url',
+];
 const MODE_DESCRIPTIONS = {
   capture: 'Record and save voice notes.',
   accomplish: 'Track tasks with checkboxes and reordering.'
@@ -355,6 +364,32 @@ function exportAllData() {
     lists,
     notes,
   }));
+}
+
+async function ensureDefaultListExists() {
+  const existing = await getList(DEFAULT_LIST_ID);
+  if (existing) return existing;
+
+  const list = {
+    id: DEFAULT_LIST_ID,
+    name: 'My Notes',
+    mode: 'capture',
+    createdAt: new Date().toISOString(),
+    noteOrder: [],
+  };
+  await saveList(list);
+  return list;
+}
+
+async function getLaunchList(listId) {
+  const normalizedListId = String(listId || '').trim() || DEFAULT_LIST_ID;
+  if (normalizedListId === DEFAULT_LIST_ID) {
+    return ensureDefaultListExists();
+  }
+
+  const existing = await getList(normalizedListId);
+  if (existing) return existing;
+  return ensureDefaultListExists();
 }
 
 function mergeAllData(snapshot) {
@@ -1056,6 +1091,60 @@ function shouldSubmitTextEntryOnEnter() {
   return !window.matchMedia('(pointer: coarse)').matches;
 }
 
+function buildSharedNoteText(payload = {}) {
+  const title = String(payload.title || '').trim();
+  const text = String(payload.text || '').trim();
+  const url = String(payload.url || '').trim();
+  const parts = [];
+
+  if (title) parts.push(title);
+  if (text) parts.push(text);
+  if (url) parts.push(url);
+
+  return parts.join('\n\n').trim();
+}
+
+function parseLaunchAction(search = window.location.search) {
+  const params = new URLSearchParams(search);
+  const hasShareTarget = params.get('share-target') === '1';
+  const sharedText = buildSharedNoteText({
+    title: params.get('share-title'),
+    text: params.get('share-text'),
+    url: params.get('share-url'),
+  });
+  const intent = String(params.get('intent') || '').trim().toLowerCase();
+  const entry = params.get('entry') === 'text' ? 'text' : 'voice';
+  const entryMode = hasShareTarget ? 'text' : (intent === 'text' ? 'text' : entry);
+  const listId = String(params.get('list') || '').trim() || DEFAULT_LIST_ID;
+  const hasLaunchParams = LAUNCH_QUERY_KEYS.some((key) => params.has(key));
+
+  return {
+    hasLaunchParams,
+    listId,
+    entryMode,
+    sharedText: hasShareTarget ? sharedText : '',
+  };
+}
+
+function clearLaunchQueryParams() {
+  const url = new URL(window.location.href);
+  let changed = false;
+
+  for (const key of LAUNCH_QUERY_KEYS) {
+    if (!url.searchParams.has(key)) continue;
+    url.searchParams.delete(key);
+    changed = true;
+  }
+
+  if (!changed || !window.history || typeof window.history.replaceState !== 'function') {
+    return;
+  }
+
+  const search = url.searchParams.toString();
+  const nextUrl = `${url.pathname}${search ? `?${search}` : ''}${url.hash}`;
+  window.history.replaceState({}, '', nextUrl);
+}
+
 async function setEditingNote(noteId) {
   editingNoteId = noteId;
   await renderListDetail(currentListId);
@@ -1173,6 +1262,23 @@ async function createTextNote() {
   } finally {
     textEntryBusy = false;
   }
+}
+
+async function saveQuickTextNote(listId, transcription) {
+  const noteText = normalizeManualNoteText(transcription);
+  if (!noteText) return false;
+
+  const list = await getLaunchList(listId);
+  if (!list) return false;
+  if (!list.noteOrder) {
+    list.noteOrder = [];
+  }
+
+  const note = buildNoteRecord(list.id, noteText);
+  await saveNote(note);
+  list.noteOrder.unshift(note.id);
+  await saveList(list);
+  return true;
 }
 
 function createNoteCard(note, list) {
@@ -2021,6 +2127,22 @@ if ('serviceWorker' in navigator) {
     .catch((err) => console.error('SW registration failed:', err));
 }
 
+async function handleLaunchAction() {
+  const launchAction = parseLaunchAction();
+  if (!launchAction.hasLaunchParams) return;
+
+  clearLaunchQueryParams();
+
+  const list = await getLaunchList(launchAction.listId);
+  showListDetailView(list.id);
+  setEntryMode(launchAction.entryMode);
+
+  if (launchAction.sharedText) {
+    await saveQuickTextNote(list.id, launchAction.sharedText);
+    await renderListDetail(list.id);
+  }
+}
+
 // --- Initialization ---
 
 showListsView();
@@ -2035,3 +2157,7 @@ if (syncKey) {
     setCloudMessage(error.message || 'Cloud sync unavailable.', true);
   });
 }
+
+handleLaunchAction().catch((error) => {
+  console.error('Launch action failed:', error);
+});

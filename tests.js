@@ -137,6 +137,39 @@ function shouldSubmitTextEntryOnEnter(pointerType) {
   return pointerType !== 'coarse';
 }
 
+function buildSharedNoteText(payload = {}) {
+  const title = String(payload.title || '').trim();
+  const text = String(payload.text || '').trim();
+  const url = String(payload.url || '').trim();
+  const parts = [];
+
+  if (title) parts.push(title);
+  if (text) parts.push(text);
+  if (url) parts.push(url);
+
+  return parts.join('\n\n').trim();
+}
+
+function parseLaunchAction(search) {
+  const params = new URLSearchParams(search);
+  const hasShareTarget = params.get('share-target') === '1';
+  const sharedText = buildSharedNoteText({
+    title: params.get('share-title'),
+    text: params.get('share-text'),
+    url: params.get('share-url'),
+  });
+  const intent = String(params.get('intent') || '').trim().toLowerCase();
+  const entry = params.get('entry') === 'text' ? 'text' : 'voice';
+
+  return {
+    hasLaunchParams: ['intent', 'entry', 'list', 'share-target', 'share-title', 'share-text', 'share-url']
+      .some((key) => params.has(key)),
+    listId: String(params.get('list') || '').trim() || 'default',
+    entryMode: hasShareTarget ? 'text' : (intent === 'text' ? 'text' : entry),
+    sharedText: hasShareTarget ? sharedText : '',
+  };
+}
+
 function buildNoteRecord(listId, transcription, options = {}) {
   return {
     id: options.id || 'generated-id',
@@ -775,6 +808,23 @@ assertEqual(normalizeManualNoteText('first\r\nsecond'), 'first\nsecond', 'normal
 assertEqual(normalizeManualNoteText(''), '', 'empty string stays empty');
 assertEqual(shouldSubmitTextEntryOnEnter('fine'), true, 'desktop pointer type submits on enter');
 assertEqual(shouldSubmitTextEntryOnEnter('coarse'), false, 'coarse pointer type does not depend on enter');
+assertEqual(buildSharedNoteText({ title: 'Article', text: 'Read later', url: 'https://example.com' }), 'Article\n\nRead later\n\nhttps://example.com', 'buildSharedNoteText combines shared fields');
+assertEqual(buildSharedNoteText({ text: 'Quick thought' }), 'Quick thought', 'buildSharedNoteText keeps lone text');
+assertEqual(buildSharedNoteText({}), '', 'buildSharedNoteText returns empty string with no content');
+
+{
+  const action = parseLaunchAction('?intent=record&entry=voice&list=default');
+  assertEqual(action.hasLaunchParams, true, 'parseLaunchAction detects shortcut launch params');
+  assertEqual(action.entryMode, 'voice', 'parseLaunchAction keeps voice shortcut mode');
+  assertEqual(action.listId, 'default', 'parseLaunchAction keeps requested list id');
+  assertEqual(action.sharedText, '', 'parseLaunchAction does not create shared text for shortcuts');
+}
+
+{
+  const action = parseLaunchAction('?share-target=1&share-title=Article&share-text=Read%20later&share-url=https%3A%2F%2Fexample.com');
+  assertEqual(action.entryMode, 'text', 'parseLaunchAction forces text mode for shared content');
+  assertEqual(action.sharedText, 'Article\n\nRead later\n\nhttps://example.com', 'parseLaunchAction formats shared content');
+}
 
 {
   const note = buildNoteRecord('list-1', 'Draft note', { duration: 12, completed: true });
@@ -1332,6 +1382,7 @@ suite('Source file integrity');
   assert(indexHtml.includes('sync-btn'), 'index.html has sync button');
   assert(indexHtml.includes('help-modal'), 'index.html has help modal');
   assert(indexHtml.includes('sync-modal'), 'index.html has sync modal');
+  assert(indexHtml.includes('v30'), 'index.html version is v30');
 
   assert(appCss.includes('.app-modal'), 'app.css defines app modal shell');
   assert(appCss.includes('.header-icon-btn'), 'app.css defines header icon buttons');
@@ -1344,6 +1395,10 @@ suite('Source file integrity');
   assert(appJs.includes('applyTheme'), 'app.js defines applyTheme');
   assert(appJs.includes('scheduleAutoPush'), 'app.js defines auto-sync scheduling');
   assert(appJs.includes('voice-notes-theme'), 'app.js uses localStorage key for theme');
+  assert(appJs.includes('parseLaunchAction'), 'app.js defines launch action parsing');
+  assert(appJs.includes('handleLaunchAction'), 'app.js defines launch action handler');
+  assert(appJs.includes('saveQuickTextNote'), 'app.js defines shared-note save helper');
+  assert(appJs.includes('buildSharedNoteText'), 'app.js defines shared-note formatter');
 }
 
 suite('Source file integrity — lists feature');
@@ -1412,11 +1467,19 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v29'), 'index.html version is v29');
+  assert(indexHtml.includes('v30'), 'index.html version is v30');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v29'), 'sw.js cache version is v29');
+  assert(swJs.includes('voice-notes-v30'), 'sw.js cache version is v30');
   assert(swJs.includes("url.pathname.startsWith('/api/')"), 'sw.js skips caching api requests');
+  assert(swJs.includes("e.request.mode === 'navigate'"), 'sw.js handles navigation requests separately');
+  assert(swJs.includes("cache.match(isNavigation ? './' : e.request)"), 'sw.js falls back to cached shell for launch URLs');
+
+  const manifestJson = readFileSync(__dirname + '/public/manifest.json', 'utf8');
+  assert(manifestJson.includes('"shortcuts"'), 'manifest defines app shortcuts');
+  assert(manifestJson.includes('"share_target"'), 'manifest defines share target');
+  assert(manifestJson.includes('intent=record'), 'manifest includes record shortcut URL');
+  assert(manifestJson.includes('intent=text'), 'manifest includes text shortcut URL');
 }
 
 } // end runTests

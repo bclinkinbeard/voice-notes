@@ -1484,10 +1484,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v23'), 'index.html version is v23');
+  assert(indexHtml.includes('v24'), 'index.html version is v24');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v23'), 'sw.js cache version is v23');
+  assert(swJs.includes('voice-notes-v24'), 'sw.js cache version is v24');
 }
 
 } // end runTests

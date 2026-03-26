@@ -11,6 +11,7 @@
   --accent-bg: rgba(233, 69, 96, 0.15);
   --text: #eee;
   --text-muted: #999;
+  --danger: #ff8a80;
   --radius: 12px;
   --waveform-fill: rgba(26, 26, 46, 0.3);
 }
@@ -28,6 +29,7 @@
   --accent-bg: rgba(244, 132, 95, 0.15);
   --text: #f5ebe0;
   --text-muted: #b5a9a0;
+  --danger: #fca5a5;
   --radius: 16px;
   --waveform-fill: rgba(28, 16, 23, 0.3);
 }
@@ -81,6 +83,7 @@
   --accent-bg: rgba(37, 99, 235, 0.12);
   --text: #1a1a1a;
   --text-muted: #6b7280;
+  --danger: #dc2626;
   --radius: 12px;
   --waveform-fill: rgba(244, 245, 247, 0.3);
 }
@@ -130,6 +133,7 @@
   --accent-bg: rgba(0, 229, 255, 0.12);
   --text: #e8e8f0;
   --text-muted: #6b6b80;
+  --danger: #ff6b9d;
   --radius: 10px;
   --waveform-fill: rgba(10, 10, 15, 0.3);
 }
@@ -351,6 +355,146 @@ header {
   cursor: pointer;
   font-family: inherit;
   min-height: 48px;
+}
+
+/* ========================================
+   Sync Panel
+   ======================================== */
+
+#sync-panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.sync-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+#sync-panel-title {
+  font-size: 1rem;
+  margin-bottom: 4px;
+}
+
+#cloud-user-details {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+#cloud-auth-status {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.sync-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.sync-key-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+#cloud-sync-key {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--surface-2);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font: inherit;
+  min-height: 48px;
+}
+
+.sync-key-row button,
+.sync-actions button {
+  border: none;
+  border-radius: 10px;
+  min-height: 48px;
+  padding: 0 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+#cloud-connect-key,
+#cloud-push {
+  background: var(--accent);
+  color: var(--text);
+}
+
+#cloud-clear-key,
+#cloud-pull {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.sync-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sync-status-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.sync-status-card span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+}
+
+.sync-status-card strong {
+  display: block;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.sync-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#cloud-sync-message {
+  min-height: 1.2em;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 10px;
+  line-height: 1.45;
+}
+
+#cloud-sync-message.error {
+  color: var(--danger);
+}
+
+.sync-key-row button:disabled,
+.sync-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 #new-list-btn:active {
@@ -922,6 +1066,18 @@ header {
 
 .filter-chip:active {
   opacity: 0.7;
+}
+
+@media (max-width: 520px) {
+  .sync-key-row,
+  .sync-actions,
+  .sync-status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-panel-header {
+    flex-direction: column;
+  }
 }
 
 /* ========================================

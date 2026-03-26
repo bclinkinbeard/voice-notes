@@ -1,6 +1,15 @@
 'use strict';
 
 import { categorizeNote, analyzeSentiment, preloadSentimentModel } from './analysis.js';
+import {
+  SYNC_KEY_STORAGE,
+  buildSnapshotPayload,
+  fetchCloudMeta,
+  normalizeSyncKey,
+  pullSnapshot,
+  pushSnapshot,
+} from './sync-client.js';
+import { sanitizeSyncSnapshot } from './sync-snapshot.js';
 
 // --- Constants ---
 
@@ -39,6 +48,18 @@ const modalCancelBtn = document.getElementById('modal-cancel-btn');
 const modalSaveBtn = document.getElementById('modal-save-btn');
 const filterBar = document.getElementById('filter-bar');
 const themePicker = document.getElementById('theme-picker');
+const cloudAuthStatus = document.getElementById('cloud-auth-status');
+const cloudUserDetails = document.getElementById('cloud-user-details');
+const cloudSyncKeyInput = document.getElementById('cloud-sync-key');
+const cloudConnectKeyBtn = document.getElementById('cloud-connect-key');
+const cloudClearKeyBtn = document.getElementById('cloud-clear-key');
+const cloudSnapshotUpdated = document.getElementById('cloud-snapshot-updated');
+const cloudSnapshotVersion = document.getElementById('cloud-snapshot-version');
+const syncLastCloudPull = document.getElementById('sync-last-cloud-pull');
+const syncLastCloudPush = document.getElementById('sync-last-cloud-push');
+const cloudPullBtn = document.getElementById('cloud-pull');
+const cloudPushBtn = document.getElementById('cloud-push');
+const cloudSyncMessage = document.getElementById('cloud-sync-message');
 
 // --- State ---
 
@@ -61,6 +82,14 @@ let editingListId = null;
 let selectedMode = 'capture';
 let dragState = null;
 let activeFilter = 'all';
+let syncKey = '';
+let cloudMeta = null;
+let syncBusy = false;
+
+const SYNC_META_KEYS = {
+  lastCloudPullAt: 'voice-notes-last-cloud-pull-at',
+  lastCloudPushAt: 'voice-notes-last-cloud-push-at',
+};
 
 // --- IndexedDB ---
 
@@ -253,6 +282,240 @@ function deleteList(id) {
       });
     });
   });
+}
+
+function exportAllData() {
+  return Promise.all([getAllLists(), getAllNotes()]).then(([lists, notes]) => ({
+    lists,
+    notes,
+  }));
+}
+
+function replaceAllData(snapshot) {
+  const data = sanitizeSyncSnapshot(snapshot);
+
+  return openDB().then((db) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['lists', 'notes'], 'readwrite');
+      const listsStore = tx.objectStore('lists');
+      const notesStore = tx.objectStore('notes');
+
+      listsStore.clear();
+      notesStore.clear();
+
+      for (const list of data.lists) {
+        listsStore.put(list);
+      }
+      for (const note of data.notes) {
+        notesStore.put(note);
+      }
+
+      tx.oncomplete = () => resolve(data);
+      tx.onerror = () => reject(tx.error);
+    });
+  });
+}
+
+// --- Cloud Sync ---
+
+function formatDateTimeLabel(isoString) {
+  if (!isoString) return 'Never';
+
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return 'Never';
+
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function getSyncMetaIso(key) {
+  return localStorage.getItem(key) || '';
+}
+
+function setSyncMetaIso(key, value) {
+  if (!value) {
+    localStorage.removeItem(key);
+    return;
+  }
+  localStorage.setItem(key, value);
+}
+
+function renderCloudMeta(meta) {
+  if (cloudSnapshotUpdated) {
+    cloudSnapshotUpdated.textContent = meta && meta.updatedAt
+      ? formatDateTimeLabel(meta.updatedAt)
+      : 'Never';
+  }
+
+  if (cloudSnapshotVersion) {
+    cloudSnapshotVersion.textContent = meta && Number.isInteger(meta.version)
+      ? String(meta.version)
+      : 'None';
+  }
+}
+
+function refreshLocalCloudLabels() {
+  if (syncLastCloudPull) {
+    syncLastCloudPull.textContent = formatDateTimeLabel(getSyncMetaIso(SYNC_META_KEYS.lastCloudPullAt));
+  }
+  if (syncLastCloudPush) {
+    syncLastCloudPush.textContent = formatDateTimeLabel(getSyncMetaIso(SYNC_META_KEYS.lastCloudPushAt));
+  }
+}
+
+function setCloudMessage(message, isError = false) {
+  if (!cloudSyncMessage) return;
+  cloudSyncMessage.textContent = message || '';
+  cloudSyncMessage.classList.toggle('error', isError);
+}
+
+function updateCloudSyncUi() {
+  const connected = Boolean(syncKey);
+
+  if (cloudAuthStatus) {
+    cloudAuthStatus.textContent = connected ? 'Connected' : 'Not connected';
+  }
+
+  if (cloudUserDetails) {
+    cloudUserDetails.textContent = connected
+      ? `Shared key loaded (${syncKey.length} characters).`
+      : 'Enter the same shared key on each device to sync lists and note text. Recordings stay local for now.';
+  }
+
+  if (cloudSyncKeyInput) {
+    if (connected && cloudSyncKeyInput.value !== syncKey) {
+      cloudSyncKeyInput.value = syncKey;
+    }
+    if (!connected && !syncBusy && document.activeElement !== cloudSyncKeyInput) {
+      cloudSyncKeyInput.value = '';
+    }
+  }
+
+  if (cloudConnectKeyBtn) cloudConnectKeyBtn.disabled = syncBusy;
+  if (cloudClearKeyBtn) cloudClearKeyBtn.disabled = syncBusy || !connected;
+  if (cloudPullBtn) cloudPullBtn.disabled = syncBusy || !connected;
+  if (cloudPushBtn) cloudPushBtn.disabled = syncBusy || !connected;
+
+  renderCloudMeta(cloudMeta);
+  refreshLocalCloudLabels();
+}
+
+async function refreshCloudSync() {
+  if (!syncKey) {
+    cloudMeta = null;
+    updateCloudSyncUi();
+    return;
+  }
+
+  const result = await fetchCloudMeta(syncKey);
+  cloudMeta = result.meta || null;
+  updateCloudSyncUi();
+  setCloudMessage('');
+}
+
+async function connectCloudSync() {
+  const nextKey = normalizeSyncKey(cloudSyncKeyInput ? cloudSyncKeyInput.value : '');
+  if (!nextKey) {
+    setCloudMessage('Sync key must be 8-256 characters.', true);
+    return;
+  }
+
+  syncBusy = true;
+  updateCloudSyncUi();
+  setCloudMessage('Connecting...');
+
+  try {
+    syncKey = nextKey;
+    localStorage.setItem(SYNC_KEY_STORAGE, syncKey);
+    await refreshCloudSync();
+    setCloudMessage('Sync key connected.');
+  } catch (error) {
+    syncKey = '';
+    cloudMeta = null;
+    localStorage.removeItem(SYNC_KEY_STORAGE);
+    setCloudMessage(error.message || 'Failed to connect sync key.', true);
+  } finally {
+    syncBusy = false;
+    updateCloudSyncUi();
+  }
+}
+
+function clearCloudSync() {
+  syncKey = '';
+  cloudMeta = null;
+  localStorage.removeItem(SYNC_KEY_STORAGE);
+  setCloudMessage('Sync key cleared.');
+  updateCloudSyncUi();
+}
+
+async function pushToCloud() {
+  if (!syncKey) {
+    setCloudMessage('Enter a sync key before pushing.', true);
+    return;
+  }
+
+  syncBusy = true;
+  updateCloudSyncUi();
+
+  try {
+    setCloudMessage('Preparing snapshot...');
+    const exportData = await exportAllData();
+    const payload = await buildSnapshotPayload(exportData);
+    const result = await pushSnapshot(payload.snapshot, syncKey, (message) => setCloudMessage(message));
+
+    cloudMeta = result.meta || null;
+    setSyncMetaIso(SYNC_META_KEYS.lastCloudPushAt, new Date().toISOString());
+    updateCloudSyncUi();
+    setCloudMessage(`Push complete. Synced ${payload.snapshot.lists.length} lists and ${payload.snapshot.notes.length} notes.`);
+  } catch (error) {
+    setCloudMessage(error.message || 'Push failed.', true);
+  } finally {
+    syncBusy = false;
+    updateCloudSyncUi();
+  }
+}
+
+async function pullFromCloud() {
+  if (!syncKey) {
+    setCloudMessage('Enter a sync key before pulling.', true);
+    return;
+  }
+
+  if (!confirm('Replace all local lists and notes with the cloud snapshot?')) {
+    return;
+  }
+
+  syncBusy = true;
+  updateCloudSyncUi();
+
+  try {
+    setCloudMessage('Downloading snapshot...');
+    const pulled = await pullSnapshot(syncKey);
+    if (!pulled.hasSnapshot || !pulled.snapshot) {
+      setCloudMessage('No cloud snapshot found for this sync key.');
+      return;
+    }
+
+    const snapshot = sanitizeSyncSnapshot(pulled.snapshot);
+
+    stopCurrentPlayback();
+    await replaceAllData(snapshot);
+
+    cloudMeta = pulled.meta || null;
+    setSyncMetaIso(SYNC_META_KEYS.lastCloudPullAt, new Date().toISOString());
+    updateCloudSyncUi();
+    setCloudMessage(`Pull complete. Loaded ${snapshot.lists.length} lists and ${snapshot.notes.length} notes.`);
+    showListsView();
+  } catch (error) {
+    setCloudMessage(error.message || 'Pull failed.', true);
+  } finally {
+    syncBusy = false;
+    updateCloudSyncUi();
+  }
 }
 
 // --- Timer Display ---
@@ -1251,6 +1514,40 @@ deleteListBtn.addEventListener('click', async () => {
   }
 });
 
+// --- Cloud Sync Actions ---
+
+if (cloudConnectKeyBtn) {
+  cloudConnectKeyBtn.addEventListener('click', () => {
+    connectCloudSync();
+  });
+}
+
+if (cloudClearKeyBtn) {
+  cloudClearKeyBtn.addEventListener('click', () => {
+    clearCloudSync();
+  });
+}
+
+if (cloudPushBtn) {
+  cloudPushBtn.addEventListener('click', () => {
+    pushToCloud();
+  });
+}
+
+if (cloudPullBtn) {
+  cloudPullBtn.addEventListener('click', () => {
+    pullFromCloud();
+  });
+}
+
+if (cloudSyncKeyInput) {
+  cloudSyncKeyInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    connectCloudSync();
+  });
+}
+
 // --- Record Button Handler ---
 
 recordBtn.addEventListener('click', async () => {
@@ -1395,4 +1692,9 @@ if ('serviceWorker' in navigator) {
 
 // --- Initialization ---
 
+syncKey = normalizeSyncKey(localStorage.getItem(SYNC_KEY_STORAGE) || '');
+updateCloudSyncUi();
+refreshCloudSync().catch((error) => {
+  setCloudMessage(error.message || 'Cloud sync unavailable.', true);
+});
 showListsView();

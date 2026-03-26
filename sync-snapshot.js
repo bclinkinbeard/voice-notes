@@ -26,20 +26,6 @@ function sanitizeStringArray(value) {
     .filter(Boolean);
 }
 
-function sanitizeSentiment(value) {
-  if (!value || typeof value !== 'object') return null;
-
-  const label = typeof value.label === 'string' ? value.label.trim() : '';
-  if (!label) return null;
-
-  const score = Number(value.score);
-  if (!Number.isFinite(score)) {
-    return { label };
-  }
-
-  return { label, score };
-}
-
 function sanitizeListRecord(list) {
   if (!list || typeof list !== 'object') {
     throw new Error('Each list must be an object.');
@@ -87,8 +73,6 @@ function sanitizeNoteRecord(note) {
     transcription: typeof note.transcription === 'string' ? note.transcription : '',
     duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : 0,
     completed: Boolean(note.completed),
-    categories: sanitizeStringArray(note.categories),
-    sentiment: sanitizeSentiment(note.sentiment),
   };
 }
 
@@ -181,8 +165,6 @@ function mergeNoteRecords(localNote, remoteNote) {
     transcription: local.transcription || remote.transcription,
     duration: Math.max(local.duration || 0, remote.duration || 0),
     completed: Boolean(local.completed || remote.completed),
-    categories: mergeStringArrays(local.categories, remote.categories),
-    sentiment: sanitizeSentiment(local.sentiment) || sanitizeSentiment(remote.sentiment),
   };
 }
 

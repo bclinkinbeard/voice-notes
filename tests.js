@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
@@ -129,31 +129,24 @@ function splitTranscriptionOnAnd(text) {
   return parts.length > 0 ? parts : [text];
 }
 
-// Replicate categorizeNote from analysis.js
-const CATEGORY_KEYWORDS = {
-  todo: ['need to', 'have to', 'should', 'must', 'remember to', 'got to', 'gotta', 'task', 'to do', 'to-do', 'make sure'],
-  idea: ['what if', 'idea', 'maybe we', 'could try', 'how about', 'brainstorm', 'concept', 'imagine', 'we could', 'possibility'],
-  question: ['how do', 'what is', 'why does', 'when will', 'where can', 'who is', 'i wonder', 'figure out', 'not sure', 'how come'],
-  reminder: ['tomorrow', 'next week', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'appointment', 'pick up', "don't forget", 'schedule'],
-  work: ['meeting', 'project', 'client', 'email', 'deadline', 'presentation', 'report', 'office', 'team', 'manager', 'colleague', 'boss', 'coworker'],
-  personal: ['family', 'friend', 'birthday', 'vacation', 'dinner', 'weekend', 'kids', 'wife', 'husband', 'parents', 'mom', 'dad'],
-  health: ['doctor', 'exercise', 'workout', 'sleep', 'headache', 'medication', 'medicine', 'symptom', 'diet', 'gym', 'pharmacy'],
-  finance: ['payment', 'budget', 'invoice', 'expense', 'price', 'cost', 'money', 'bill', 'bank', 'credit', 'debt', 'salary', 'rent']
-};
+function normalizeManualNoteText(text) {
+  return String(text || '').replace(/\r\n?/g, '\n').trim();
+}
 
-function categorizeNote(text) {
-  if (!text) return [];
-  const lower = text.toLowerCase();
-  const matched = [];
-  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    for (const kw of keywords) {
-      if (lower.includes(kw)) {
-        matched.push(category);
-        break;
-      }
-    }
-  }
-  return matched;
+function shouldSubmitTextEntryOnEnter(pointerType) {
+  return pointerType !== 'coarse';
+}
+
+function buildNoteRecord(listId, transcription, options = {}) {
+  return {
+    id: options.id || 'generated-id',
+    audioBlob: Object.prototype.hasOwnProperty.call(options, 'audioBlob') ? options.audioBlob : null,
+    duration: Number.isFinite(options.duration) ? options.duration : 0,
+    transcription,
+    createdAt: options.createdAt || '2026-02-15T14:30:00.000Z',
+    listId,
+    completed: Boolean(options.completed),
+  };
 }
 
 // Minimal DOM element mock
@@ -171,6 +164,7 @@ function createElement(tag) {
     style: {},
     children,
     dataset: {},
+    value: '',
     classList: {
       add(c) { classes.add(c); el.className = Array.from(classes).join(' '); },
       remove(c) { classes.delete(c); el.className = Array.from(classes).join(' '); },
@@ -183,6 +177,8 @@ function createElement(tag) {
       if (!listeners[event]) listeners[event] = [];
       listeners[event].push(fn);
     },
+    focus() {},
+    setSelectionRange() {},
     _listeners: listeners,
     querySelector(selector) {
       const cls = selector.startsWith('.') ? selector.slice(1) : null;
@@ -225,14 +221,15 @@ function escapeHTML(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Replicate createNoteCard logic (updated with list parameter)
-function createNoteCard(note, list) {
+// Replicate createNoteCard structure
+function createNoteCard(note, list, options = {}) {
   const card = createElement('div');
   card.className = 'note-card';
   card.dataset.noteId = note.id;
   const isAccomplish = list && list.mode === 'accomplish';
+  const isEditing = Boolean(options.editing);
 
-  if (isAccomplish && note.completed) {
+  if (isAccomplish && note.completed && !isEditing) {
     card.classList.add('completed');
   }
 
@@ -252,41 +249,36 @@ function createNoteCard(note, list) {
   const content = createElement('div');
   content.className = 'note-content';
 
-  const transcriptionEl = createElement('p');
-  transcriptionEl.className = 'note-transcription';
-  if (note.transcription) {
-    transcriptionEl.textContent = note.transcription;
+  if (isEditing) {
+    const editInput = createElement('textarea');
+    editInput.className = 'note-editor';
+    editInput.value = note.transcription || '';
+    content.appendChild(editInput);
+
+    const editActions = createElement('div');
+    editActions.className = 'note-edit-actions';
+
+    const cancelBtn = createElement('button');
+    cancelBtn.className = 'note-edit-secondary-btn';
+    cancelBtn.textContent = 'Cancel';
+    editActions.appendChild(cancelBtn);
+
+    const saveBtn = createElement('button');
+    saveBtn.className = 'note-action-btn';
+    saveBtn.textContent = 'Save';
+    editActions.appendChild(saveBtn);
+
+    content.appendChild(editActions);
   } else {
-    transcriptionEl.textContent = 'No transcription available';
-    transcriptionEl.classList.add('note-transcription-empty');
-  }
-  content.appendChild(transcriptionEl);
-
-  // Analysis tags (categories + sentiment)
-  const hasCategories = note.categories && note.categories.length > 0;
-  const hasSentiment = note.sentiment && note.sentiment.label !== 'neutral';
-  if (hasCategories || hasSentiment) {
-    const tagsEl = createElement('div');
-    tagsEl.className = 'note-tags';
-
-    if (hasSentiment) {
-      const sentimentTag = createElement('span');
-      sentimentTag.className = 'note-tag note-tag-sentiment';
-      sentimentTag.dataset.sentiment = note.sentiment.label;
-      sentimentTag.textContent = note.sentiment.label;
-      tagsEl.appendChild(sentimentTag);
+    const transcriptionEl = createElement('p');
+    transcriptionEl.className = 'note-transcription';
+    if (note.transcription) {
+      transcriptionEl.textContent = note.transcription;
+    } else {
+      transcriptionEl.textContent = 'No transcription available';
+      transcriptionEl.classList.add('note-transcription-empty');
     }
-
-    if (hasCategories) {
-      for (const cat of note.categories) {
-        const tag = createElement('span');
-        tag.className = 'note-tag';
-        tag.textContent = cat;
-        tagsEl.appendChild(tag);
-      }
-    }
-
-    content.appendChild(tagsEl);
+    content.appendChild(transcriptionEl);
   }
 
   const hasAudio = !!note.audioBlob;
@@ -294,9 +286,16 @@ function createNoteCard(note, list) {
   if (hasAudio) {
     const meta = createElement('div');
     meta.className = 'note-meta';
-    meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
+    const metaParts = [];
+    if (note.duration > 0) {
+      metaParts.unshift(formatDuration(note.duration));
+    }
+    metaParts.push(formatDate(note.createdAt));
+    meta.textContent = metaParts.join(' \u00B7 ');
     content.appendChild(meta);
+  }
 
+  if (hasAudio) {
     const progress = createElement('div');
     progress.className = 'note-progress';
     const progressFill = createElement('div');
@@ -307,23 +306,31 @@ function createNoteCard(note, list) {
 
   card.appendChild(content);
 
-  const actions = createElement('div');
-  actions.className = 'note-actions';
+  if (!isEditing) {
+    const actions = createElement('div');
+    actions.className = 'note-actions';
 
-  if (hasAudio) {
-    const playBtn = createElement('button');
-    playBtn.type = 'button';
-    playBtn.className = 'play-btn';
-    playBtn.textContent = '\u25B6';
-    actions.appendChild(playBtn);
+    if (hasAudio) {
+      const playBtn = createElement('button');
+      playBtn.type = 'button';
+      playBtn.className = 'note-action-btn play-btn';
+      playBtn.textContent = '\u25B6';
+      actions.appendChild(playBtn);
+    }
+
+    const editBtn = createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'note-action-btn edit-btn';
+    editBtn.textContent = 'Edit';
+    actions.appendChild(editBtn);
+
+    const deleteBtn = createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'note-action-btn delete-btn';
+    deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+    actions.appendChild(deleteBtn);
+    card.appendChild(actions);
   }
-
-  const deleteBtn = createElement('button');
-  deleteBtn.type = 'button';
-  deleteBtn.className = 'delete-btn';
-  deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
-  actions.appendChild(deleteBtn);
-  card.appendChild(actions);
 
   return card;
 }
@@ -750,8 +757,6 @@ suite('Note schema contract');
     createdAt: '2026-02-15T14:30:00.000Z',
     listId: 'default',
     completed: false,
-    categories: ['work', 'todo'],
-    sentiment: { label: 'positive', score: 0.95 }
   };
   assertEqual(typeof note.id, 'string', 'id is string');
   assertEqual(typeof note.duration, 'number', 'duration is number');
@@ -760,9 +765,24 @@ suite('Note schema contract');
   assert('audioBlob' in note, 'audioBlob field exists');
   assertEqual(typeof note.listId, 'string', 'listId is string');
   assertEqual(typeof note.completed, 'boolean', 'completed is boolean');
-  assert(Array.isArray(note.categories), 'categories is array');
-  assertEqual(typeof note.sentiment.label, 'string', 'sentiment.label is string');
-  assertEqual(typeof note.sentiment.score, 'number', 'sentiment.score is number');
+  assert(!('categories' in note), 'categories field is removed');
+  assert(!('sentiment' in note), 'sentiment field is removed');
+}
+
+suite('Text entry helpers');
+assertEqual(normalizeManualNoteText('  hello  '), 'hello', 'trims whitespace');
+assertEqual(normalizeManualNoteText('first\r\nsecond'), 'first\nsecond', 'normalizes line endings');
+assertEqual(normalizeManualNoteText(''), '', 'empty string stays empty');
+assertEqual(shouldSubmitTextEntryOnEnter('fine'), true, 'desktop pointer type submits on enter');
+assertEqual(shouldSubmitTextEntryOnEnter('coarse'), false, 'coarse pointer type does not depend on enter');
+
+{
+  const note = buildNoteRecord('list-1', 'Draft note', { duration: 12, completed: true });
+  assertEqual(note.listId, 'list-1', 'buildNoteRecord sets listId');
+  assertEqual(note.transcription, 'Draft note', 'buildNoteRecord sets transcription');
+  assertEqual(note.duration, 12, 'buildNoteRecord keeps duration');
+  assertEqual(note.completed, true, 'buildNoteRecord keeps completed flag');
+  assertEqual(note.audioBlob, null, 'buildNoteRecord defaults audioBlob to null');
 }
 
 suite('List schema contract');
@@ -1223,6 +1243,7 @@ suite('Note card — text-only note (no audioBlob)');
   assert(card.querySelector('.play-btn') === null, 'no play button for text-only note');
   assert(card.querySelector('.note-meta') === null, 'no meta line for text-only note');
   assert(card.querySelector('.note-progress') === null, 'no progress bar for text-only note');
+  assert(card.querySelector('.edit-btn') !== null, 'still has edit button');
   assert(card.querySelector('.delete-btn') !== null, 'still has delete button');
   assert(card.querySelector('.note-checkbox') !== null, 'still has checkbox in accomplish mode');
   assert(card.querySelector('.drag-handle') !== null, 'still has drag handle in accomplish mode');
@@ -1244,126 +1265,24 @@ suite('Note card — note with audioBlob still shows controls');
   assert(card.querySelector('.play-btn') !== null, 'has play button for audio note');
   assert(card.querySelector('.note-meta') !== null, 'has meta line for audio note');
   assert(card.querySelector('.note-progress') !== null, 'has progress bar for audio note');
+  assert(card.querySelector('.edit-btn') !== null, 'has edit button for audio note');
 }
 
-// ============================================================
-// categorizeNote tests
-// ============================================================
-
-suite('categorizeNote — empty and null input');
-assertDeepEqual(categorizeNote(''), [], 'empty string returns empty array');
-assertDeepEqual(categorizeNote(null), [], 'null returns empty array');
-assertDeepEqual(categorizeNote(undefined), [], 'undefined returns empty array');
-
-suite('categorizeNote — single category matches');
-{
-  const result1 = categorizeNote('I need to buy groceries');
-  assert(result1.includes('todo'), 'matches todo for "need to"');
-
-  const result2 = categorizeNote('What if we built a spaceship?');
-  assert(result2.includes('idea'), 'matches idea for "what if"');
-
-  const result3 = categorizeNote('How do I fix this?');
-  assert(result3.includes('question'), 'matches question for "how do"');
-
-  const result4 = categorizeNote('Pick up the package tomorrow');
-  assert(result4.includes('reminder'), 'matches reminder for "tomorrow"');
-
-  const result5 = categorizeNote('The meeting with the client went well');
-  assert(result5.includes('work'), 'matches work for "meeting" and "client"');
-
-  const result6 = categorizeNote('Having dinner with family on the weekend');
-  assert(result6.includes('personal'), 'matches personal for "family"');
-
-  const result7 = categorizeNote('Need to schedule a doctor appointment');
-  assert(result7.includes('health'), 'matches health for "doctor"');
-
-  const result8 = categorizeNote('Pay the rent and check the bank balance');
-  assert(result8.includes('finance'), 'matches finance for "rent" and "bank"');
-}
-
-suite('categorizeNote — multiple category matches');
-{
-  const result = categorizeNote('I need to schedule a doctor appointment tomorrow');
-  assert(result.includes('todo'), 'multi: matches todo');
-  assert(result.includes('health'), 'multi: matches health');
-  assert(result.includes('reminder'), 'multi: matches reminder');
-}
-
-suite('categorizeNote — case insensitive');
-{
-  const result = categorizeNote('I NEED TO go to the GYM');
-  assert(result.includes('todo'), 'case insensitive: matches todo');
-  assert(result.includes('health'), 'case insensitive: matches health');
-}
-
-suite('categorizeNote — no match');
-{
-  const result = categorizeNote('The sky is blue');
-  assertEqual(result.length, 0, 'unrelated text returns empty array');
-}
-
-suite('Note card — with categories and sentiment');
+suite('Note card — editing state');
 {
   const note = {
-    id: 'test-analysis',
-    duration: 30,
-    transcription: 'Meeting with the team tomorrow',
-    createdAt: '2026-02-15T14:30:00.000Z',
-    categories: ['work', 'reminder'],
-    sentiment: { label: 'positive', score: 0.92 }
-  };
-  const card = createNoteCard(note);
-  const tags = card.querySelectorAll('.note-tag');
-  assert(tags.length === 3, 'card has 3 tags (1 sentiment + 2 categories)');
-
-  const sentimentTag = card.querySelector('.note-tag-sentiment');
-  assert(sentimentTag !== null, 'has sentiment tag');
-  assertEqual(sentimentTag.textContent, 'positive', 'sentiment tag shows label');
-  assertEqual(sentimentTag.dataset.sentiment, 'positive', 'sentiment data attribute set');
-}
-
-suite('Note card — no tags when no analysis');
-{
-  const note = {
-    id: 'test-no-analysis',
+    id: 'test-edit',
     duration: 10,
     transcription: 'hello',
     createdAt: '2026-02-15T14:30:00.000Z'
   };
-  const card = createNoteCard(note);
-  assert(card.querySelector('.note-tags') === null, 'no tags container when no analysis');
-}
-
-suite('Note card — categories only (no sentiment)');
-{
-  const note = {
-    id: 'test-cats-only',
-    duration: 10,
-    transcription: 'hello',
-    createdAt: '2026-02-15T14:30:00.000Z',
-    categories: ['todo'],
-    sentiment: null
-  };
-  const card = createNoteCard(note);
-  const tags = card.querySelectorAll('.note-tag');
-  assertEqual(tags.length, 1, 'one category tag');
-  assertEqual(tags[0].textContent, 'todo', 'tag shows category name');
-  assert(card.querySelector('.note-tag-sentiment') === null, 'no sentiment tag');
-}
-
-suite('Note card — neutral sentiment not shown');
-{
-  const note = {
-    id: 'test-neutral',
-    duration: 10,
-    transcription: 'hello',
-    createdAt: '2026-02-15T14:30:00.000Z',
-    categories: [],
-    sentiment: { label: 'neutral', score: 0.5 }
-  };
-  const card = createNoteCard(note);
-  assert(card.querySelector('.note-tags') === null, 'no tags for neutral sentiment with no categories');
+  const card = createNoteCard(note, null, { editing: true });
+  assert(card.querySelector('.note-editor') !== null, 'editing card shows textarea');
+  assert(card.querySelector('.note-edit-actions') !== null, 'editing card shows action row');
+  assert(card.querySelector('.note-action-btn') !== null, 'editing card shows save button');
+  assert(card.querySelector('.note-edit-secondary-btn') !== null, 'editing card shows cancel button');
+  assert(card.querySelector('.note-transcription') === null, 'editing card hides transcription paragraph');
+  assert(card.querySelector('.edit-btn') === null, 'editing card hides standalone edit button');
 }
 
 // ============================================================
@@ -1388,31 +1307,27 @@ suite('Source file integrity');
   assert(appJs.includes('recognition.onend'), 'stopTranscription waits for onend event');
   assert(appJs.includes('recognition.onerror = done'), 'stopTranscription handles onerror fallback');
   assert(appJs.includes('Promise'), 'stopTranscription returns a Promise');
-  assert(appJs.includes("import { categorizeNote"), 'app.js imports categorizeNote from analysis.js');
   assert(!appJs.includes('require('), 'no CommonJS requires');
   assert(appJs.includes("'use strict'"), 'uses strict mode');
 
-  const analysisJs = readFileSync(__dirname + '/analysis.js', 'utf8');
-  assert(analysisJs.includes('CATEGORY_KEYWORDS'), 'analysis.js defines CATEGORY_KEYWORDS');
-  assert(analysisJs.includes('categorizeNote'), 'analysis.js exports categorizeNote');
-  assert(analysisJs.includes('analyzeSentiment'), 'analysis.js exports analyzeSentiment');
-  assert(analysisJs.includes('analyzeNote'), 'analysis.js exports analyzeNote');
-  assert(analysisJs.includes('@huggingface/transformers'), 'analysis.js imports transformers.js');
+  assert(!existsSync(__dirname + '/analysis.js'), 'analysis.js has been removed');
 
   const appCss = readFileSync(__dirname + '/app.css', 'utf8');
   assert(appCss.includes('.note-transcription'), 'app.css defines .note-transcription');
   assert(appCss.includes('.note-transcription-empty'), 'app.css defines .note-transcription-empty');
-  assert(appCss.includes('.note-tags'), 'app.css defines .note-tags');
-  assert(appCss.includes('.note-tag'), 'app.css defines .note-tag');
-  assert(appCss.includes('.note-tag-sentiment'), 'app.css defines .note-tag-sentiment');
-  assert(appCss.includes('.filter-chip'), 'app.css defines .filter-chip');
-  assert(appCss.includes('#filter-bar'), 'app.css defines #filter-bar');
+  assert(appCss.includes('.note-editor'), 'app.css defines .note-editor');
+  assert(appCss.includes('.note-edit-actions'), 'app.css defines .note-edit-actions');
+  assert(appCss.includes('.note-action-btn'), 'app.css defines .note-action-btn');
+  assert(appCss.includes('.note-edit-secondary-btn'), 'app.css defines .note-edit-secondary-btn');
+  assert(appCss.includes('#text-entry-panel'), 'app.css defines #text-entry-panel');
+  assert(appCss.includes('#entry-mode-toggle'), 'app.css defines #entry-mode-toggle');
 
   const indexHtml = readFileSync(__dirname + '/index.html', 'utf8');
   assert(indexHtml.includes('app.js'), 'index.html loads app.js');
   assert(indexHtml.includes('app.css'), 'index.html loads app.css');
   assert(indexHtml.includes('type="module"'), 'index.html uses type="module" for app.js');
-  assert(indexHtml.includes('filter-bar'), 'index.html has filter-bar element');
+  assert(indexHtml.includes('entry-mode-toggle'), 'index.html has entry mode toggle');
+  assert(indexHtml.includes('text-entry-panel'), 'index.html has text entry panel');
   assert(indexHtml.includes('help-btn'), 'index.html has help button');
   assert(indexHtml.includes('sync-btn'), 'index.html has sync button');
   assert(indexHtml.includes('help-modal'), 'index.html has help modal');
@@ -1448,7 +1363,7 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes('showListDetailView'), 'app.js defines showListDetailView');
   assert(appJs.includes("DEFAULT_LIST_ID"), 'app.js defines DEFAULT_LIST_ID');
   assert(appJs.includes('migrateNotesToDefaultList'), 'app.js defines migration function');
-  assert(appJs.includes('const DB_VERSION = 3;'), 'IndexedDB version is 3');
+  assert(appJs.includes('const DB_VERSION = 4;'), 'IndexedDB version is 4');
   assert(appJs.includes("objectStore('lists'"), 'app.js uses lists object store');
   assert(appJs.includes('listId'), 'notes reference listId');
   assert(appJs.includes('completed'), 'notes have completed field');
@@ -1461,14 +1376,20 @@ suite('Source file integrity — lists feature');
   assert(appJs.includes('splitTranscriptionOnAnd'), 'app.js defines splitTranscriptionOnAnd');
   assert(appJs.includes('hasAudio'), 'app.js checks hasAudio for conditional rendering');
   assert(appJs.includes('cleanFillersFromTranscription'), 'app.js defines cleanFillersFromTranscription');
-  assert(appJs.includes('categorizeNote'), 'app.js uses categorizeNote');
-  assert(appJs.includes('analyzeSentiment'), 'app.js uses analyzeSentiment');
-  assert(appJs.includes('processUnanalyzedNotes'), 'app.js defines processUnanalyzedNotes');
-  assert(appJs.includes('renderFilterBar'), 'app.js defines renderFilterBar');
-  assert(appJs.includes('activeFilter'), 'app.js tracks activeFilter state');
-  assert(appJs.includes('note-tags'), 'app.js uses note-tags class');
-  assert(appJs.includes('note-tag'), 'app.js uses note-tag class');
-  assert(appJs.includes('filter-chip'), 'app.js uses filter-chip class');
+  assert(appJs.includes('buildNoteRecord'), 'app.js defines buildNoteRecord');
+  assert(appJs.includes('createTextNote'), 'app.js defines createTextNote');
+  assert(appJs.includes('setEntryMode'), 'app.js defines setEntryMode');
+  assert(appJs.includes('updateEntryModeUi'), 'app.js defines updateEntryModeUi');
+  assert(appJs.includes('saveEditedNote'), 'app.js defines saveEditedNote');
+  assert(appJs.includes('text-note-input'), 'app.js references text-note-input');
+  assert(appJs.includes('entry-mode-toggle'), 'app.js references entry-mode-toggle');
+  assert(appJs.includes('note-editor'), 'app.js uses note-editor class');
+  assert(appJs.includes('note-action-btn'), 'app.js uses note-action-btn class');
+  assert(appJs.includes('note-edit-secondary-btn'), 'app.js uses note-edit-secondary-btn class');
+  assert(!appJs.includes('categorizeNote'), 'app.js no longer uses categorizeNote');
+  assert(!appJs.includes('analyzeSentiment'), 'app.js no longer uses analyzeSentiment');
+  assert(!appJs.includes('renderFilterBar'), 'app.js no longer defines renderFilterBar');
+  assert(!appJs.includes('filter-chip'), 'app.js no longer uses filter-chip class');
 
   const appCss = readFileSync(__dirname + '/app.css', 'utf8');
   assert(appCss.includes('.list-card'), 'app.css defines .list-card');
@@ -1481,6 +1402,8 @@ suite('Source file integrity — lists feature');
   assert(appCss.includes('#list-modal'), 'app.css defines #list-modal');
   assert(appCss.includes('.mode-btn'), 'app.css defines .mode-btn');
   assert(appCss.includes('#back-btn'), 'app.css defines #back-btn');
+  assert(appCss.includes('.note-editor'), 'app.css defines .note-editor');
+  assert(appCss.includes('#text-entry-panel'), 'app.css defines #text-entry-panel');
 
   const indexHtml = readFileSync(__dirname + '/index.html', 'utf8');
   assert(indexHtml.includes('lists-view'), 'index.html has lists-view');
@@ -1489,10 +1412,10 @@ suite('Source file integrity — lists feature');
   assert(indexHtml.includes('back-btn'), 'index.html has back-btn');
   assert(indexHtml.includes('new-list-btn'), 'index.html has new-list-btn');
   assert(indexHtml.includes('mode-selector'), 'index.html has mode-selector');
-  assert(indexHtml.includes('v28'), 'index.html version is v28');
+  assert(indexHtml.includes('v29'), 'index.html version is v29');
 
   const swJs = readFileSync(__dirname + '/public/sw.js', 'utf8');
-  assert(swJs.includes('voice-notes-v28'), 'sw.js cache version is v28');
+  assert(swJs.includes('voice-notes-v29'), 'sw.js cache version is v29');
   assert(swJs.includes("url.pathname.startsWith('/api/')"), 'sw.js skips caching api requests');
 }
 

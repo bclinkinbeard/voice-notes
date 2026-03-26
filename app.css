@@ -112,16 +112,6 @@
   border-color: #fff;
 }
 
-[data-theme="frost"] .note-tag-sentiment[data-sentiment="positive"] {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
-}
-
-[data-theme="frost"] .note-tag-sentiment[data-sentiment="negative"] {
-  background: rgba(220, 38, 38, 0.1);
-  color: #dc2626;
-}
-
 /* ========================================
    Theme: Neon
    ======================================== */
@@ -739,6 +729,30 @@ header {
   font-size: 0.9rem;
 }
 
+#entry-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.entry-mode-btn {
+  min-height: 44px;
+  border: 1px solid var(--surface-2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.entry-mode-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text);
+}
+
 /* ========================================
    Recorder
    ======================================== */
@@ -816,6 +830,78 @@ header {
   margin-top: 12px;
 }
 
+#text-entry-panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+#text-note-input,
+.note-editor {
+  width: 100%;
+  border: 1px solid var(--surface-2);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  padding: 12px 14px;
+}
+
+#text-note-input {
+  min-height: 96px;
+}
+
+.note-editor {
+  min-height: 88px;
+}
+
+#text-note-input:focus,
+.note-editor:focus {
+  border-color: var(--accent);
+}
+
+#text-entry-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+#text-entry-hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+#text-note-submit,
+.note-edit-secondary-btn,
+.note-edit-actions .note-action-btn {
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-2);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 14px;
+  transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+}
+
+#text-note-submit,
+.note-edit-actions .note-action-btn {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.note-edit-secondary-btn {
+  color: var(--text-muted);
+}
+
 /* ========================================
    Note Cards
    ======================================== */
@@ -829,6 +915,10 @@ header {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.note-card.editing {
+  align-items: flex-start;
 }
 
 .note-card.completed {
@@ -871,6 +961,8 @@ header {
   line-height: 1.4;
   color: var(--text);
   margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .note-card.completed .note-transcription {
@@ -890,7 +982,7 @@ header {
   flex-shrink: 0;
 }
 
-.note-actions button {
+.note-action-btn {
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -901,6 +993,7 @@ header {
   justify-content: center;
   padding: 0;
   font-family: inherit;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
 
 .play-btn {
@@ -915,8 +1008,33 @@ header {
   font-size: 0.65rem;
 }
 
+.edit-btn {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+}
+
+.note-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+.note-edit-actions .note-action-btn,
+.note-edit-secondary-btn {
+  width: auto;
+  height: auto;
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
 .play-btn:active,
-.delete-btn:active {
+.delete-btn:active,
+.edit-btn:active,
+.note-action-btn:active,
+.note-edit-secondary-btn:active,
+#text-note-submit:active {
   opacity: 0.7;
 }
 
@@ -1094,67 +1212,6 @@ header {
   opacity: 0.8;
 }
 
-/* ========================================
-   Analysis Tags & Filter Bar
-   ======================================== */
-
-.note-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-}
-
-.note-tag {
-  font-size: 0.6rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-muted);
-  text-transform: lowercase;
-}
-
-.note-tag-sentiment[data-sentiment="positive"] {
-  background: rgba(76, 175, 80, 0.2);
-  color: #81c784;
-}
-
-.note-tag-sentiment[data-sentiment="negative"] {
-  background: rgba(239, 83, 80, 0.2);
-  color: #ef9a9a;
-}
-
-#filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
-  padding: 4px 0;
-}
-
-.filter-chip {
-  font-size: 0.75rem;
-  padding: 6px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--surface-2);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font-family: inherit;
-  min-height: 32px;
-  transition: all 0.15s;
-}
-
-.filter-chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.filter-chip:active {
-  opacity: 0.7;
-}
-
 @media (max-width: 520px) {
   .app-modal {
     padding: 14px;
@@ -1175,6 +1232,15 @@ header {
 
   .sync-panel-header {
     flex-direction: column;
+  }
+
+  #text-entry-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #text-note-submit {
+    width: 100%;
   }
 }
 

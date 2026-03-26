@@ -15,7 +15,6 @@
     "vite": "^6.0.0"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.4.0",
     "@vercel/blob": "^2.3.1",
     "vercel": "^50.37.1"
   }

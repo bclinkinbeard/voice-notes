@@ -54,6 +54,8 @@ async function buildSnapshotPayload(exportData) {
     delete next.audioBlob;
     delete next.audioHash;
     delete next.audioMimeType;
+    delete next.categories;
+    delete next.sentiment;
     return next;
   });
 

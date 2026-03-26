@@ -44,8 +44,6 @@ test('sanitizeSyncSnapshot normalizes list and note records', () => {
         transcription: 'hello',
         duration: 4.4,
         completed: 1,
-        categories: ['work', '', 'idea'],
-        sentiment: { label: 'positive', score: 0.99 },
       },
     ],
   });
@@ -54,8 +52,8 @@ test('sanitizeSyncSnapshot normalizes list and note records', () => {
   assert.deepEqual(snapshot.lists[0].noteOrder, ['note-1', 'note-2']);
   assert.equal(snapshot.notes[0].duration, 4);
   assert.equal(snapshot.notes[0].completed, true);
-  assert.deepEqual(snapshot.notes[0].categories, ['work', 'idea']);
-  assert.deepEqual(snapshot.notes[0].sentiment, { label: 'positive', score: 0.99 });
+  assert.equal('categories' in snapshot.notes[0], false);
+  assert.equal('sentiment' in snapshot.notes[0], false);
   assert.equal('audioHash' in snapshot.notes[0], false);
   assert.equal('audioMimeType' in snapshot.notes[0], false);
 });
@@ -80,8 +78,6 @@ test('mergeSyncData preserves local records and imports remote records', () => {
           transcription: 'local only',
           duration: 3,
           completed: false,
-          categories: ['idea'],
-          sentiment: null,
           audioBlob: { local: true },
         },
         {
@@ -91,8 +87,6 @@ test('mergeSyncData preserves local records and imports remote records', () => {
           transcription: 'local shared',
           duration: 2,
           completed: false,
-          categories: ['work'],
-          sentiment: { label: 'positive', score: 0.8 },
           audioBlob: { local: true },
         },
       ],
@@ -117,8 +111,6 @@ test('mergeSyncData preserves local records and imports remote records', () => {
           transcription: 'remote shared',
           duration: 5,
           completed: true,
-          categories: ['todo'],
-          sentiment: { label: 'negative', score: 0.2 },
         },
         {
           id: 'note-remote',
@@ -127,8 +119,6 @@ test('mergeSyncData preserves local records and imports remote records', () => {
           transcription: 'remote only',
           duration: 4,
           completed: false,
-          categories: ['personal'],
-          sentiment: null,
         },
       ],
     }
@@ -145,8 +135,8 @@ test('mergeSyncData preserves local records and imports remote records', () => {
   assert.equal(shared.transcription, 'local shared');
   assert.equal(shared.duration, 5);
   assert.equal(shared.completed, true);
-  assert.deepEqual(shared.categories, ['work', 'todo']);
-  assert.deepEqual(shared.sentiment, { label: 'positive', score: 0.8 });
+  assert.equal('categories' in shared, false);
+  assert.equal('sentiment' in shared, false);
   assert.deepEqual(shared.audioBlob, { local: true });
 
   const remote = merged.notes.find((note) => note.id === 'note-remote');

@@ -1,6 +1,5 @@
 'use strict';
 
-import { categorizeNote, analyzeSentiment, preloadSentimentModel } from './analysis.js';
 import {
   SYNC_KEY_STORAGE,
   buildSnapshotPayload,
@@ -14,7 +13,7 @@ import { mergeSyncData } from './sync-snapshot.js';
 // --- Constants ---
 
 const DEFAULT_LIST_ID = 'default';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const AUTO_PUSH_DELAY_MS = 1200;
 const MODE_DESCRIPTIONS = {
   capture: 'Record and save voice notes.',
@@ -37,12 +36,19 @@ const renameListBtn = document.getElementById('rename-list-btn');
 const deleteListBtn = document.getElementById('delete-list-btn');
 const listNotesEl = document.getElementById('list-notes');
 const listEmptyState = document.getElementById('list-empty-state');
+const entryModeToggle = document.getElementById('entry-mode-toggle');
+const voiceEntryBtn = document.getElementById('voice-entry-btn');
+const textEntryBtn = document.getElementById('text-entry-btn');
 const recordBtn = document.getElementById('record-btn');
 const recordHint = document.getElementById('record-hint');
 const timerEl = document.getElementById('timer');
 const recorderEl = document.getElementById('recorder');
 const waveformCanvas = document.getElementById('waveform');
 const waveformCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
+const textEntryPanel = document.getElementById('text-entry-panel');
+const textNoteInput = document.getElementById('text-note-input');
+const textEntryHint = document.getElementById('text-entry-hint');
+const textNoteSubmitBtn = document.getElementById('text-note-submit');
 const listModal = document.getElementById('list-modal');
 const listModalTitle = document.getElementById('list-modal-title');
 const listNameInput = document.getElementById('list-name-input');
@@ -54,7 +60,6 @@ const helpModal = document.getElementById('help-modal');
 const helpModalCloseBtn = document.getElementById('help-modal-close');
 const syncModal = document.getElementById('sync-modal');
 const syncModalCloseBtn = document.getElementById('sync-modal-close');
-const filterBar = document.getElementById('filter-bar');
 const themePicker = document.getElementById('theme-picker');
 const cloudAuthStatus = document.getElementById('cloud-auth-status');
 const cloudUserDetails = document.getElementById('cloud-user-details');
@@ -86,15 +91,17 @@ let recordBusy = false;
 let speechRecognition = null;
 let transcriptionResult = '';
 let currentListId = null;
+let editingNoteId = null;
 let editingListId = null;
 let selectedMode = 'capture';
 let dragState = null;
-let activeFilter = 'all';
+let currentEntryMode = 'voice';
 let syncKey = '';
 let cloudMeta = null;
 let syncBusy = false;
 let autoPushTimer = null;
 let autoPushQueued = false;
+let textEntryBusy = false;
 
 const SYNC_META_KEYS = {
   lastCloudPullAt: 'voice-notes-last-cloud-pull-at',
@@ -123,9 +130,10 @@ function openDB() {
         db.createObjectStore('lists', { keyPath: 'id' });
       }
 
+      const noteStore = e.target.transaction.objectStore('notes');
+
       // Add listId index to notes if upgrading from v1
       if (oldVersion < 2) {
-        const noteStore = e.target.transaction.objectStore('notes');
         if (!noteStore.indexNames.contains('listId')) {
           noteStore.createIndex('listId', 'listId', { unique: false });
         }
@@ -139,6 +147,28 @@ function openDB() {
           createdAt: new Date().toISOString(),
           noteOrder: []
         });
+      }
+
+      if (oldVersion < 4) {
+        const cursorRequest = noteStore.openCursor();
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor) return;
+          const note = cursor.value;
+          let changed = false;
+          if ('categories' in note) {
+            delete note.categories;
+            changed = true;
+          }
+          if ('sentiment' in note) {
+            delete note.sentiment;
+            changed = true;
+          }
+          if (changed) {
+            cursor.update(note);
+          }
+          cursor.continue();
+        };
       }
     };
 
@@ -184,7 +214,10 @@ function saveNote(note) {
   return openDB().then((db) => {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('notes', 'readwrite');
-      tx.objectStore('notes').put(note);
+      const nextNote = { ...note };
+      delete nextNote.categories;
+      delete nextNote.sentiment;
+      tx.objectStore('notes').put(nextNote);
       tx.oncomplete = () => {
         scheduleAutoPush();
         resolve();
@@ -220,6 +253,17 @@ function getNotesByList(listId) {
         request.onsuccess = () => resolve(request.result.filter((n) => n.listId === listId));
         request.onerror = (e) => reject(e.target.error);
       }
+    });
+  });
+}
+
+function getNote(id) {
+  return openDB().then((db) => {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('notes', 'readonly');
+      const request = tx.objectStore('notes').get(id);
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = (e) => reject(e.target.error);
     });
   });
 }
@@ -855,6 +899,18 @@ function splitTranscriptionOnAnd(text) {
   return parts.length > 0 ? parts : [text];
 }
 
+function buildNoteRecord(listId, transcription, options = {}) {
+  return {
+    id: crypto.randomUUID(),
+    audioBlob: Object.prototype.hasOwnProperty.call(options, 'audioBlob') ? options.audioBlob : null,
+    duration: Number.isFinite(options.duration) ? options.duration : 0,
+    transcription,
+    createdAt: options.createdAt || new Date().toISOString(),
+    listId,
+    completed: Boolean(options.completed),
+  };
+}
+
 // --- Audio Recording ---
 
 async function startRecording() {
@@ -973,13 +1029,163 @@ function formatDate(isoString) {
   });
 }
 
+function focusTextEntryInput() {
+  if (!textNoteInput) return;
+  requestAnimationFrame(() => {
+    textNoteInput.focus();
+    const length = textNoteInput.value.length;
+    textNoteInput.setSelectionRange(length, length);
+  });
+}
+
+function focusNoteEditInput(noteId) {
+  requestAnimationFrame(() => {
+    const input = listNotesEl.querySelector(`[data-note-edit-input="${noteId}"]`);
+    if (!input) return;
+    input.focus();
+    const length = input.value.length;
+    input.setSelectionRange(length, length);
+  });
+}
+
+function normalizeManualNoteText(text) {
+  return String(text || '').replace(/\r\n?/g, '\n').trim();
+}
+
+function shouldSubmitTextEntryOnEnter() {
+  return !window.matchMedia('(pointer: coarse)').matches;
+}
+
+async function setEditingNote(noteId) {
+  editingNoteId = noteId;
+  await renderListDetail(currentListId);
+  focusNoteEditInput(noteId);
+}
+
+async function cancelEditingNote() {
+  if (!editingNoteId) return;
+  editingNoteId = null;
+  await renderListDetail(currentListId);
+}
+
+async function saveEditedNote(noteId, nextText) {
+  const note = await getNote(noteId);
+  if (!note) return;
+  note.transcription = normalizeManualNoteText(nextText);
+  delete note.categories;
+  delete note.sentiment;
+  await saveNote(note);
+  editingNoteId = null;
+  await renderListDetail(currentListId);
+}
+
+function updateEntryModeUi() {
+  const hasList = Boolean(currentListId);
+  const isTextMode = currentEntryMode === 'text';
+
+  if (entryModeToggle) {
+    entryModeToggle.classList.toggle('hidden', !hasList);
+  }
+
+  if (voiceEntryBtn) {
+    voiceEntryBtn.classList.toggle('active', hasList && !isTextMode);
+    voiceEntryBtn.setAttribute('aria-pressed', String(hasList && !isTextMode));
+  }
+
+  if (textEntryBtn) {
+    textEntryBtn.classList.toggle('active', hasList && isTextMode);
+    textEntryBtn.setAttribute('aria-pressed', String(hasList && isTextMode));
+  }
+
+  if (recorderEl) {
+    recorderEl.classList.toggle('hidden', !hasList || isTextMode);
+  }
+
+  if (textEntryPanel) {
+    textEntryPanel.classList.toggle('hidden', !hasList || !isTextMode);
+  }
+
+  if (!hasList) return;
+
+  const isAccomplish = listDetailMode && listDetailMode.dataset.mode === 'accomplish';
+
+  if (textNoteInput) {
+    textNoteInput.placeholder = isAccomplish ? 'Type a task' : 'Type a note';
+  }
+
+  if (textEntryHint) {
+    textEntryHint.textContent = shouldSubmitTextEntryOnEnter()
+      ? (isAccomplish
+        ? 'Press Enter to add the task and keep moving. Use Shift+Enter for a line break.'
+        : 'Press Enter to add another note. Use Shift+Enter for a new line.')
+      : 'Use the button to add another note. Return inserts a new line on touch keyboards.';
+  }
+
+  if (textNoteSubmitBtn) {
+    textNoteSubmitBtn.textContent = isAccomplish ? 'Add Task' : 'Add Note';
+    textNoteSubmitBtn.disabled = textEntryBusy;
+  }
+
+  if (isTextMode) {
+    focusTextEntryInput();
+  }
+}
+
+function setEntryMode(mode) {
+  if (isRecording) return;
+  currentEntryMode = mode === 'text' ? 'text' : 'voice';
+  updateEntryModeUi();
+}
+
+async function createTextNote() {
+  if (textEntryBusy || !currentListId || !textNoteInput) return false;
+
+  const listIdAtCreate = currentListId;
+  const transcription = normalizeManualNoteText(textNoteInput.value);
+  if (!transcription) {
+    focusTextEntryInput();
+    return false;
+  }
+
+  textEntryBusy = true;
+
+  try {
+    const list = await getList(listIdAtCreate);
+    if (!list) return false;
+
+    if (!list.noteOrder) {
+      list.noteOrder = [];
+    }
+
+    const note = buildNoteRecord(listIdAtCreate, transcription);
+
+    await saveNote(note);
+    list.noteOrder.unshift(note.id);
+    await saveList(list);
+
+    textNoteInput.value = '';
+    editingNoteId = null;
+    await renderListDetail(listIdAtCreate);
+    if (currentListId === listIdAtCreate && currentEntryMode === 'text') {
+      focusTextEntryInput();
+    }
+    return true;
+  } finally {
+    textEntryBusy = false;
+  }
+}
+
 function createNoteCard(note, list) {
   const card = document.createElement('div');
   card.className = 'note-card';
   card.dataset.noteId = note.id;
   const isAccomplish = list && list.mode === 'accomplish';
+  const isEditing = editingNoteId === note.id;
+  if (isEditing) {
+    card.classList.add('editing');
+  }
 
-  if (isAccomplish && note.completed) {
+  if (isAccomplish && note.completed && !isEditing) {
     card.classList.add('completed');
   }
 
@@ -1004,65 +1210,85 @@ function createNoteCard(note, list) {
     card.appendChild(checkbox);
 
     // Touch drag-to-reorder on handle
-    dragHandle.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      startDrag(card, e.touches[0]);
-    }, { passive: false });
+    if (!isEditing) {
+      dragHandle.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        startDrag(card, e.touches[0]);
+      }, { passive: false });
+    }
   }
 
-  // Content area
   const content = document.createElement('div');
   content.className = 'note-content';
 
-  // Transcription
-  const transcriptionEl = document.createElement('p');
-  transcriptionEl.className = 'note-transcription';
-  if (note.transcription) {
-    transcriptionEl.textContent = note.transcription;
-  } else {
-    transcriptionEl.textContent = 'No transcription available';
-    transcriptionEl.classList.add('note-transcription-empty');
-  }
-  content.appendChild(transcriptionEl);
-
-  // Analysis tags (categories + sentiment)
-  const hasCategories = note.categories && note.categories.length > 0;
-  const hasSentiment = note.sentiment && note.sentiment.label !== 'neutral';
-  if (hasCategories || hasSentiment) {
-    const tagsEl = document.createElement('div');
-    tagsEl.className = 'note-tags';
-
-    if (hasSentiment) {
-      const sentimentTag = document.createElement('span');
-      sentimentTag.className = 'note-tag note-tag-sentiment';
-      sentimentTag.dataset.sentiment = note.sentiment.label;
-      sentimentTag.textContent = note.sentiment.label;
-      tagsEl.appendChild(sentimentTag);
-    }
-
-    if (hasCategories) {
-      for (const cat of note.categories) {
-        const tag = document.createElement('span');
-        tag.className = 'note-tag';
-        tag.textContent = cat;
-        tagsEl.appendChild(tag);
+  if (isEditing) {
+    const editInput = document.createElement('textarea');
+    editInput.className = 'note-editor';
+    editInput.rows = Math.max(3, String(note.transcription || '').split('\n').length);
+    editInput.value = note.transcription || '';
+    editInput.dataset.noteEditInput = note.id;
+    editInput.setAttribute('aria-label', 'Edit note text');
+    editInput.addEventListener('keydown', async (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        await saveEditedNote(note.id, editInput.value);
+        return;
       }
-    }
 
-    content.appendChild(tagsEl);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        await cancelEditingNote();
+      }
+    });
+    content.appendChild(editInput);
+
+    const editActions = document.createElement('div');
+    editActions.className = 'note-edit-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'note-edit-secondary-btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      cancelEditingNote();
+    });
+    editActions.appendChild(cancelBtn);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'note-action-btn';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', () => {
+      saveEditedNote(note.id, editInput.value);
+    });
+    editActions.appendChild(saveBtn);
+
+    content.appendChild(editActions);
+  } else {
+    const transcriptionEl = document.createElement('p');
+    transcriptionEl.className = 'note-transcription';
+    if (note.transcription) {
+      transcriptionEl.textContent = note.transcription;
+    } else {
+      transcriptionEl.textContent = 'No transcription available';
+      transcriptionEl.classList.add('note-transcription-empty');
+    }
+    content.appendChild(transcriptionEl);
   }
 
   const hasAudio = !!note.audioBlob;
-
-  // Meta line (duration · date)
   if (hasAudio) {
     const meta = document.createElement('div');
     meta.className = 'note-meta';
-    meta.textContent = formatDuration(note.duration) + ' \u00B7 ' + formatDate(note.createdAt);
+    const metaParts = [];
+    if (note.duration > 0) {
+      metaParts.unshift(formatDuration(note.duration));
+    }
+    metaParts.push(formatDate(note.createdAt));
+    meta.textContent = metaParts.join(' \u00B7 ');
     content.appendChild(meta);
   }
 
-  // Progress bar (only for notes with audio)
   let progressFill = null;
   if (hasAudio) {
     const progress = document.createElement('div');
@@ -1083,15 +1309,27 @@ function createNoteCard(note, list) {
   if (hasAudio) {
     playBtn = document.createElement('button');
     playBtn.type = 'button';
-    playBtn.className = 'play-btn';
+    playBtn.className = 'note-action-btn play-btn';
     playBtn.textContent = '\u25B6';
     playBtn.setAttribute('aria-label', 'Play');
     actions.appendChild(playBtn);
   }
 
+  if (!isEditing) {
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'note-action-btn edit-btn';
+    editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+    editBtn.setAttribute('aria-label', 'Edit note text');
+    editBtn.addEventListener('click', () => {
+      setEditingNote(note.id);
+    });
+    actions.appendChild(editBtn);
+  }
+
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
-  deleteBtn.className = 'delete-btn';
+  deleteBtn.className = 'note-action-btn delete-btn';
   deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
   deleteBtn.setAttribute('aria-label', 'Delete');
 
@@ -1161,6 +1399,9 @@ function createNoteCard(note, list) {
 
     try {
       await deleteNote(note.id);
+      if (editingNoteId === note.id) {
+        editingNoteId = null;
+      }
       // Remove from list noteOrder if present
       if (currentListId) {
         const listData = await getList(currentListId);
@@ -1255,52 +1496,6 @@ async function renderLists() {
   }
 }
 
-function renderFilterBar(notes) {
-  const allCategories = new Set();
-  for (const note of notes) {
-    if (note.categories) {
-      for (const cat of note.categories) {
-        allCategories.add(cat);
-      }
-    }
-  }
-
-  while (filterBar.firstChild) {
-    filterBar.removeChild(filterBar.firstChild);
-  }
-
-  if (allCategories.size === 0) {
-    filterBar.classList.add('hidden');
-    return;
-  }
-
-  const allChip = document.createElement('button');
-  allChip.type = 'button';
-  allChip.className = 'filter-chip' + (activeFilter === 'all' ? ' active' : '');
-  allChip.textContent = 'All';
-  allChip.dataset.filter = 'all';
-  allChip.addEventListener('click', () => {
-    activeFilter = 'all';
-    renderListDetail(currentListId);
-  });
-  filterBar.appendChild(allChip);
-
-  for (const cat of allCategories) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'filter-chip' + (activeFilter === cat ? ' active' : '');
-    chip.textContent = cat;
-    chip.dataset.filter = cat;
-    chip.addEventListener('click', () => {
-      activeFilter = cat;
-      renderListDetail(currentListId);
-    });
-    filterBar.appendChild(chip);
-  }
-
-  filterBar.classList.remove('hidden');
-}
-
 async function renderListDetail(listId) {
   stopCurrentPlayback();
 
@@ -1342,28 +1537,21 @@ async function renderListDetail(listId) {
     notes.push(...incomplete, ...completed);
   }
 
-  // Render filter bar
-  renderFilterBar(notes);
-
-  // Apply category filter
-  let filteredNotes = notes;
-  if (activeFilter !== 'all') {
-    filteredNotes = notes.filter((n) => n.categories && n.categories.includes(activeFilter));
-  }
-
   while (listNotesEl.firstChild) {
     listNotesEl.removeChild(listNotesEl.firstChild);
   }
 
-  for (const note of filteredNotes) {
+  for (const note of notes) {
     listNotesEl.appendChild(createNoteCard(note, list));
   }
 
-  if (filteredNotes.length === 0) {
+  if (notes.length === 0) {
     listEmptyState.classList.remove('hidden');
   } else {
     listEmptyState.classList.add('hidden');
   }
+
+  updateEntryModeUi();
 }
 
 // --- Drag-to-Reorder (Accomplish Mode) ---
@@ -1458,76 +1646,30 @@ async function onDragEnd() {
   }
 }
 
-// --- Background Analysis ---
-
-async function processUnanalyzedNotes(listId) {
-  try {
-    const list = await getList(listId);
-    const isAccomplish = list && list.mode === 'accomplish';
-    const notes = await getNotesByList(listId);
-    const needsCategories = notes.filter((n) => n.transcription && !n.categories);
-
-    // Instant: add categories to any notes missing them
-    let categorized = false;
-    for (const note of needsCategories) {
-      note.categories = categorizeNote(note.transcription);
-      await saveNote(note);
-      categorized = true;
-    }
-
-    if (categorized && currentListId === listId && !isRecording) {
-      await renderListDetail(listId);
-    }
-
-    // Background: run sentiment analysis on notes missing it
-    // Only for capture lists — accomplish lists don't use sentiment.
-    // Skip if user is recording — avoid memory pressure from model loading
-    if (!isAccomplish) {
-      const needsSentiment = notes.filter((n) => n.transcription && !n.sentiment);
-      for (const note of needsSentiment) {
-        if (isRecording) break;
-        try {
-          const sentiment = await analyzeSentiment(note.transcription);
-          note.sentiment = sentiment;
-          await saveNote(note);
-          if (currentListId === listId && !isRecording) {
-            await renderListDetail(listId);
-          }
-        } catch (e) {
-          // Skip notes that fail
-        }
-      }
-    }
-  } catch (e) {
-    console.error('processUnanalyzedNotes error:', e);
-  }
-}
-
 // --- View Navigation ---
 
 function showListsView() {
   stopCurrentPlayback();
   currentListId = null;
-  activeFilter = 'all';
+  editingNoteId = null;
+  if (textNoteInput) {
+    textNoteInput.value = '';
+  }
   listsView.classList.remove('hidden');
   listDetailView.classList.add('hidden');
   backBtn.classList.add('hidden');
+  updateEntryModeUi();
   renderLists();
 }
 
 function showListDetailView(listId) {
   currentListId = listId;
-  activeFilter = 'all';
+  editingNoteId = null;
   listsView.classList.add('hidden');
   listDetailView.classList.remove('hidden');
   backBtn.classList.remove('hidden');
   recordHint.textContent = 'Tap to record';
   renderListDetail(listId);
-
-  // Run lightweight keyword categorization on existing notes in background.
-  // Sentiment model loading is deferred until after first recording to avoid
-  // memory pressure while the user might be about to record.
-  processUnanalyzedNotes(listId);
 }
 
 backBtn.addEventListener('click', showListsView);
@@ -1746,6 +1888,32 @@ if (cloudSyncKeyInput) {
   });
 }
 
+if (entryModeToggle) {
+  entryModeToggle.addEventListener('click', (e) => {
+    const button = e.target.closest('.entry-mode-btn');
+    if (!button) return;
+    if (button === textEntryBtn) {
+      setEntryMode('text');
+    } else if (button === voiceEntryBtn) {
+      setEntryMode('voice');
+    }
+  });
+}
+
+if (textNoteSubmitBtn) {
+  textNoteSubmitBtn.addEventListener('click', () => {
+    createTextNote();
+  });
+}
+
+if (textNoteInput) {
+  textNoteInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || !shouldSubmitTextEntryOnEnter()) return;
+    e.preventDefault();
+    createTextNote();
+  });
+}
+
 // --- Record Button Handler ---
 
 recordBtn.addEventListener('click', async () => {
@@ -1774,53 +1942,18 @@ recordBtn.addEventListener('click', async () => {
 
         if (!list.noteOrder) list.noteOrder = [];
 
-        const savedNotes = [];
         for (let i = 0; i < parts.length; i++) {
-          const note = {
-            id: crypto.randomUUID(),
+          const note = buildNoteRecord(currentListId, parts[i] || '', {
+            createdAt: now,
             audioBlob: isAccomplish ? null : (i === 0 ? result.blob : null),
             duration: isAccomplish ? 0 : (i === 0 ? result.duration : 0),
-            transcription: parts[i] || '',
-            createdAt: now,
-            listId: currentListId,
-            completed: false,
-            categories: categorizeNote(parts[i] || ''),
-            sentiment: null
-          };
+          });
           await saveNote(note);
           list.noteOrder.unshift(note.id);
-          savedNotes.push(note);
         }
 
         await saveList(list);
         await renderListDetail(currentListId);
-
-        // Background sentiment analysis — runs after recording finishes
-        // so model loading doesn't compete with MediaRecorder for memory.
-        // Only for capture lists — accomplish lists don't use sentiment.
-        const listIdAtSave = currentListId;
-        if (!isAccomplish) {
-          (async () => {
-            for (const note of savedNotes) {
-              if (!note.transcription) continue;
-              try {
-                const sentiment = await analyzeSentiment(note.transcription);
-                note.sentiment = sentiment;
-                await saveNote(note);
-                if (currentListId === listIdAtSave && !isRecording) {
-                  await renderListDetail(listIdAtSave);
-                }
-              } catch (e) {
-                // Sentiment analysis failed — note still saved without it
-              }
-            }
-            // Also process any other unanalyzed notes now that recording is done
-            processUnanalyzedNotes(listIdAtSave);
-          })();
-        } else {
-          // Still run categorization for unanalyzed notes in accomplish mode
-          processUnanalyzedNotes(listIdAtSave);
-        }
       } else if (result) {
         recordHint.textContent = 'Too short \u2014 hold longer';
       }

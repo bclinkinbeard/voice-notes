@@ -15,6 +15,7 @@ import { sanitizeSyncSnapshot } from './sync-snapshot.js';
 
 const DEFAULT_LIST_ID = 'default';
 const DB_VERSION = 3;
+const AUTO_PUSH_DELAY_MS = 1200;
 const MODE_DESCRIPTIONS = {
   capture: 'Record and save voice notes.',
   accomplish: 'Track tasks with checkboxes and reordering.'
@@ -23,6 +24,8 @@ const MODE_DESCRIPTIONS = {
 // --- DOM References ---
 
 const backBtn = document.getElementById('back-btn');
+const helpBtn = document.getElementById('help-btn');
+const syncBtn = document.getElementById('sync-btn');
 const listsView = document.getElementById('lists-view');
 const listsContainer = document.getElementById('lists-container');
 const listsEmptyState = document.getElementById('lists-empty-state');
@@ -47,6 +50,10 @@ const modeSelector = document.getElementById('mode-selector');
 const modeDescription = document.getElementById('mode-description');
 const modalCancelBtn = document.getElementById('modal-cancel-btn');
 const modalSaveBtn = document.getElementById('modal-save-btn');
+const helpModal = document.getElementById('help-modal');
+const helpModalCloseBtn = document.getElementById('help-modal-close');
+const syncModal = document.getElementById('sync-modal');
+const syncModalCloseBtn = document.getElementById('sync-modal-close');
 const filterBar = document.getElementById('filter-bar');
 const themePicker = document.getElementById('theme-picker');
 const cloudAuthStatus = document.getElementById('cloud-auth-status');
@@ -86,6 +93,8 @@ let activeFilter = 'all';
 let syncKey = '';
 let cloudMeta = null;
 let syncBusy = false;
+let autoPushTimer = null;
+let autoPushQueued = false;
 
 const SYNC_META_KEYS = {
   lastCloudPullAt: 'voice-notes-last-cloud-pull-at',
@@ -176,7 +185,10 @@ function saveNote(note) {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('notes', 'readwrite');
       tx.objectStore('notes').put(note);
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => {
+        scheduleAutoPush();
+        resolve();
+      };
       tx.onerror = (e) => reject(e.target.error);
     });
   });
@@ -217,7 +229,10 @@ function deleteNote(id) {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('notes', 'readwrite');
       tx.objectStore('notes').delete(id);
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => {
+        scheduleAutoPush();
+        resolve();
+      };
       tx.onerror = (e) => reject(e.target.error);
     });
   });
@@ -244,7 +259,10 @@ function saveList(list) {
     return new Promise((resolve, reject) => {
       const tx = db.transaction('lists', 'readwrite');
       tx.objectStore('lists').put(list);
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => {
+        scheduleAutoPush();
+        resolve();
+      };
       tx.onerror = (e) => reject(e.target.error);
     });
   });
@@ -278,7 +296,10 @@ function deleteList(id) {
       return new Promise((resolve, reject) => {
         const tx = db.transaction('lists', 'readwrite');
         tx.objectStore('lists').delete(id);
-        tx.oncomplete = () => resolve();
+        tx.oncomplete = () => {
+          scheduleAutoPush();
+          resolve();
+        };
         tx.onerror = (e) => reject(e.target.error);
       });
     });
@@ -374,11 +395,49 @@ function setCloudMessage(message, isError = false) {
   cloudSyncMessage.classList.toggle('error', isError);
 }
 
+function clearAutoPushQueue() {
+  autoPushQueued = false;
+  if (autoPushTimer) {
+    clearTimeout(autoPushTimer);
+    autoPushTimer = null;
+  }
+}
+
+function scheduleAutoPush() {
+  if (!syncKey) return;
+
+  autoPushQueued = true;
+  if (autoPushTimer) {
+    clearTimeout(autoPushTimer);
+  }
+
+  autoPushTimer = setTimeout(() => {
+    autoPushTimer = null;
+    flushAutoPush().catch(() => {});
+  }, AUTO_PUSH_DELAY_MS);
+}
+
+async function flushAutoPush() {
+  if (!autoPushQueued || !syncKey) return;
+
+  if (syncBusy) {
+    scheduleAutoPush();
+    return;
+  }
+
+  autoPushQueued = false;
+  await pushToCloud({ isAuto: true });
+}
+
 function updateCloudSyncUi() {
   const connected = Boolean(syncKey);
 
   if (cloudAuthStatus) {
     cloudAuthStatus.textContent = connected ? 'Connected' : 'Not connected';
+  }
+
+  if (syncBtn) {
+    syncBtn.dataset.connected = connected ? 'true' : 'false';
   }
 
   if (cloudUserDetails) {
@@ -446,6 +505,7 @@ async function connectCloudSync() {
 }
 
 function clearCloudSync() {
+  clearAutoPushQueue();
   syncKey = '';
   cloudMeta = null;
   localStorage.removeItem(SYNC_KEY_STORAGE);
@@ -453,17 +513,32 @@ function clearCloudSync() {
   updateCloudSyncUi();
 }
 
-async function pushToCloud() {
+async function pushToCloud(options = {}) {
+  const { isAuto = false } = options;
+
   if (!syncKey) {
-    setCloudMessage('Enter a sync key before pushing.', true);
-    return;
+    if (!isAuto) {
+      setCloudMessage('Enter a sync key before pushing.', true);
+    }
+    return false;
+  }
+
+  if (!isAuto) {
+    clearAutoPushQueue();
+  }
+
+  if (syncBusy) {
+    if (isAuto) {
+      scheduleAutoPush();
+    }
+    return false;
   }
 
   syncBusy = true;
   updateCloudSyncUi();
 
   try {
-    setCloudMessage('Preparing snapshot...');
+    setCloudMessage(isAuto ? 'Auto-syncing latest changes...' : 'Preparing snapshot...');
     const exportData = await exportAllData();
     const payload = await buildSnapshotPayload(exportData);
     const result = await pushSnapshot(payload.snapshot, syncKey, (message) => setCloudMessage(message));
@@ -471,12 +546,21 @@ async function pushToCloud() {
     cloudMeta = result.meta || null;
     setSyncMetaIso(SYNC_META_KEYS.lastCloudPushAt, new Date().toISOString());
     updateCloudSyncUi();
-    setCloudMessage(`Push complete. Synced ${payload.snapshot.lists.length} lists and ${payload.snapshot.notes.length} notes.`);
+    setCloudMessage(
+      isAuto
+        ? `Auto-sync complete. ${payload.snapshot.notes.length} notes are up to date.`
+        : `Push complete. Synced ${payload.snapshot.lists.length} lists and ${payload.snapshot.notes.length} notes.`
+    );
+    return true;
   } catch (error) {
-    setCloudMessage(error.message || 'Push failed.', true);
+    setCloudMessage(error.message || (isAuto ? 'Auto-sync failed.' : 'Push failed.'), true);
+    return false;
   } finally {
     syncBusy = false;
     updateCloudSyncUi();
+    if (autoPushQueued && !autoPushTimer) {
+      scheduleAutoPush();
+    }
   }
 }
 
@@ -491,6 +575,7 @@ async function pullFromCloud() {
   }
 
   syncBusy = true;
+  clearAutoPushQueue();
   updateCloudSyncUi();
 
   try {
@@ -1397,6 +1482,19 @@ function showListDetailView(listId) {
 
 backBtn.addEventListener('click', showListsView);
 
+function openModal(modal, focusTarget) {
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  if (focusTarget) {
+    focusTarget.focus();
+  }
+}
+
+function closeModal(modal) {
+  if (!modal) return;
+  modal.classList.add('hidden');
+}
+
 // --- List Modal ---
 
 function openListModal(listId) {
@@ -1423,12 +1521,11 @@ function openListModal(listId) {
   }
 
   modeDescription.textContent = MODE_DESCRIPTIONS[selectedMode];
-  listModal.classList.remove('hidden');
-  listNameInput.focus();
+  openModal(listModal, listNameInput);
 }
 
 function closeListModal() {
-  listModal.classList.add('hidden');
+  closeModal(listModal);
   editingListId = null;
   listNameInput.value = '';
 }
@@ -1455,6 +1552,56 @@ modeSelector.addEventListener('click', (e) => {
 newListBtn.addEventListener('click', () => openListModal(null));
 modalCancelBtn.addEventListener('click', closeListModal);
 listModal.querySelector('#list-modal-backdrop').addEventListener('click', closeListModal);
+
+if (helpBtn) {
+  helpBtn.addEventListener('click', () => {
+    openModal(helpModal, helpModalCloseBtn);
+  });
+}
+
+if (syncBtn) {
+  syncBtn.addEventListener('click', () => {
+    openModal(syncModal, cloudSyncKeyInput);
+  });
+}
+
+if (helpModalCloseBtn) {
+  helpModalCloseBtn.addEventListener('click', () => {
+    closeModal(helpModal);
+  });
+}
+
+if (syncModalCloseBtn) {
+  syncModalCloseBtn.addEventListener('click', () => {
+    closeModal(syncModal);
+  });
+}
+
+document.querySelectorAll('[data-close-modal]').forEach((element) => {
+  element.addEventListener('click', () => {
+    const modalId = element.getAttribute('data-close-modal');
+    if (!modalId) return;
+    closeModal(document.getElementById(modalId));
+  });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+
+  if (!listModal.classList.contains('hidden')) {
+    closeListModal();
+    return;
+  }
+
+  if (helpModal && !helpModal.classList.contains('hidden')) {
+    closeModal(helpModal);
+    return;
+  }
+
+  if (syncModal && !syncModal.classList.contains('hidden')) {
+    closeModal(syncModal);
+  }
+});
 
 modalSaveBtn.addEventListener('click', async () => {
   const name = listNameInput.value.trim();

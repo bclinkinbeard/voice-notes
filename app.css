@@ -90,7 +90,7 @@
 
 [data-theme="frost"] .list-card,
 [data-theme="frost"] .note-card,
-[data-theme="frost"] #how-to-use {
+[data-theme="frost"] .app-modal-content {
   box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
 }
 
@@ -225,6 +225,7 @@ header {
   align-items: center;
   justify-content: center;
   position: relative;
+  min-height: 48px;
 }
 
 #back-btn {
@@ -245,6 +246,54 @@ header {
   opacity: 0.7;
 }
 
+#header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.header-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--surface-2);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, border-color 0.15s, background 0.15s;
+  min-height: 30px;
+}
+
+.header-icon-btn:active {
+  transform: scale(0.96);
+}
+
+#sync-btn {
+  position: relative;
+}
+
+#sync-btn[data-connected="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#sync-btn[data-connected="true"]::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
 #app-version {
   font-size: 0.7rem;
   color: var(--text-muted);
@@ -255,7 +304,9 @@ header {
 #theme-picker {
   display: flex;
   justify-content: center;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-top: 8px;
 }
 
@@ -281,54 +332,6 @@ header {
 
 #lists-view {
   padding-top: 16px;
-}
-
-#how-to-use {
-  background: var(--surface);
-  border-radius: var(--radius);
-  margin-bottom: 16px;
-  padding: 0;
-}
-
-#how-to-use summary {
-  padding: 14px 16px;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  cursor: pointer;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-#how-to-use summary::-webkit-details-marker {
-  display: none;
-}
-
-#how-to-use summary::after {
-  content: '\25B6';
-  font-size: 0.6rem;
-  transition: transform 0.2s;
-}
-
-#how-to-use[open] summary::after {
-  transform: rotate(90deg);
-}
-
-#how-to-use-content {
-  padding: 0 16px 14px;
-}
-
-#how-to-use-content p {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-  margin-bottom: 10px;
-}
-
-#how-to-use-content p:last-child {
-  margin-bottom: 0;
 }
 
 #lists-header {
@@ -358,14 +361,87 @@ header {
 }
 
 /* ========================================
+   App Modals
+   ======================================== */
+
+.app-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.app-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.68);
+}
+
+.app-modal-content {
+  position: relative;
+  width: min(100%, 420px);
+  max-height: min(86dvh, 720px);
+  overflow: auto;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 22px 20px 20px;
+}
+
+.app-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.app-modal-header h2 {
+  font-size: 1.05rem;
+  margin-bottom: 4px;
+}
+
+.app-modal-subtitle {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.app-modal-close {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--surface-2);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.app-modal-body {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.55;
+}
+
+.help-modal-copy p {
+  margin-bottom: 12px;
+}
+
+.help-modal-copy p:last-child {
+  margin-bottom: 0;
+}
+
+/* ========================================
    Sync Panel
    ======================================== */
 
 #sync-panel {
-  background: var(--surface);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 16px;
+  padding: 0;
 }
 
 .sync-panel-header {
@@ -374,11 +450,6 @@ header {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
-}
-
-#sync-panel-title {
-  font-size: 1rem;
-  margin-bottom: 4px;
 }
 
 #cloud-user-details {
@@ -1069,6 +1140,17 @@ header {
 }
 
 @media (max-width: 520px) {
+  .app-modal {
+    padding: 14px;
+    align-items: flex-end;
+  }
+
+  .app-modal-content {
+    width: 100%;
+    max-height: 88dvh;
+    border-radius: 18px 18px 0 0;
+  }
+
   .sync-key-row,
   .sync-actions,
   .sync-status-grid {

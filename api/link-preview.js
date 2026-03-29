@@ -2,6 +2,8 @@ import { jsonResponse, serverError } from '../server/json.js';
 
 const MAX_HTML_LENGTH = 180000;
 const REQUEST_TIMEOUT_MS = 6000;
+const PREVIEW_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+const previewCache = new Map();
 
 function extractMetaTag(html, attribute, value) {
   const pattern = new RegExp(`<meta[^>]*${attribute}=["']${value}["'][^>]*content=["']([^"']+)["'][^>]*>`, 'i');
@@ -26,6 +28,21 @@ function decodeHtml(value) {
 function truncate(value, maxLength = 280) {
   if (!value) return '';
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1).trim()}…`;
+}
+
+function stripTags(value) {
+  return String(value || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractFirstParagraph(html) {
+  const match = html.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+  if (!match) return '';
+  return decodeHtml(stripTags(match[1]));
 }
 
 async function fetchHtml(url) {
@@ -58,7 +75,8 @@ function buildPreview(html, url) {
   const ogDescription = extractMetaTag(html, 'property', 'og:description');
   const metaDescription = extractMetaTag(html, 'name', 'description');
   const twitterDescription = extractMetaTag(html, 'name', 'twitter:description');
-  const description = truncate(ogDescription || twitterDescription || metaDescription, 320);
+  const firstParagraph = extractFirstParagraph(html);
+  const description = truncate(ogDescription || twitterDescription || metaDescription || firstParagraph, 320);
 
   const siteName = truncate(extractMetaTag(html, 'property', 'og:site_name'), 100);
 
@@ -90,8 +108,18 @@ export async function GET(request) {
       return jsonResponse({ ok: false, error: 'Only HTTP(S) URLs are supported.' }, { status: 400 });
     }
 
-    const html = await fetchHtml(parsed.toString());
-    const preview = buildPreview(html, parsed.toString());
+    const normalizedUrl = parsed.toString();
+    const cached = previewCache.get(normalizedUrl);
+    if (cached && Date.now() - cached.cachedAt < PREVIEW_CACHE_TTL_MS) {
+      return jsonResponse({ ok: true, preview: cached.preview, cached: true });
+    }
+
+    const html = await fetchHtml(normalizedUrl);
+    const preview = buildPreview(html, normalizedUrl);
+    previewCache.set(normalizedUrl, {
+      cachedAt: Date.now(),
+      preview,
+    });
 
     return jsonResponse({ ok: true, preview });
   } catch (error) {

@@ -21,6 +21,8 @@ const MODE_DESCRIPTIONS = {
   links: 'Save URLs and preview each link as a card.'
 };
 const LINK_PREVIEW_ENDPOINT = '/api/link-preview';
+const LINK_PREVIEW_STORAGE_KEY = 'voice-notes-link-previews-v1';
+const LINK_PREVIEW_TTL_MS = 1000 * 60 * 60 * 24;
 
 // --- DOM References ---
 
@@ -105,6 +107,7 @@ let autoPushTimer = null;
 let autoPushQueued = false;
 let textEntryBusy = false;
 const linkPreviewCache = new Map();
+let persistedLinkPreviewCacheLoaded = false;
 
 const SYNC_META_KEYS = {
   lastCloudPullAt: 'voice-notes-last-cloud-pull-at',
@@ -1063,11 +1066,27 @@ function normalizeManualNoteText(text) {
   return String(text || '').replace(/\r\n?/g, '\n').trim();
 }
 
+function extractFirstUrlCandidate(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  const markdownMatch = normalized.match(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/i);
+  if (markdownMatch && markdownMatch[1]) {
+    return markdownMatch[1];
+  }
+  const directMatch = normalized.match(/https?:\/\/[^\s<>"')]+/i);
+  if (directMatch && directMatch[0]) {
+    return directMatch[0];
+  }
+  return normalized;
+}
+
 function normalizeLinkInput(value) {
-  const trimmed = String(value || '').trim();
+  const extracted = extractFirstUrlCandidate(value);
+  const trimmed = String(extracted || '').trim();
   if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  const withoutTrailingPunctuation = trimmed.replace(/[),.;!?]+$/g, '');
+  if (/^https?:\/\//i.test(withoutTrailingPunctuation)) return withoutTrailingPunctuation;
+  return `https://${withoutTrailingPunctuation}`;
 }
 
 function isTweetUrl(value) {
@@ -1095,6 +1114,7 @@ function toHttpUrlOrNull(value) {
 }
 
 async function fetchLinkPreview(url) {
+  ensurePersistedLinkPreviewCacheLoaded();
   if (linkPreviewCache.has(url)) {
     return linkPreviewCache.get(url);
   }
@@ -1110,12 +1130,61 @@ async function fetchLinkPreview(url) {
       if (!payload || !payload.ok || !payload.preview) {
         throw new Error('Preview unavailable');
       }
+      cachePreviewPayload(url, payload.preview);
       return payload.preview;
     })
-    .catch(() => null);
+    .catch(() => readPersistedPreview(url));
 
   linkPreviewCache.set(url, request);
   return request;
+}
+
+function ensurePersistedLinkPreviewCacheLoaded() {
+  if (persistedLinkPreviewCacheLoaded) return;
+  persistedLinkPreviewCacheLoaded = true;
+  try {
+    const raw = localStorage.getItem(LINK_PREVIEW_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    const now = Date.now();
+    for (const [url, entry] of Object.entries(parsed)) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (!entry.preview || !entry.savedAt || now - entry.savedAt > LINK_PREVIEW_TTL_MS) continue;
+      linkPreviewCache.set(url, Promise.resolve(entry.preview));
+    }
+  } catch {
+    // Ignore cache parse/storage failures.
+  }
+}
+
+function readPersistedPreview(url) {
+  try {
+    const raw = localStorage.getItem(LINK_PREVIEW_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const entry = parsed && parsed[url];
+    if (!entry || !entry.preview || !entry.savedAt) return null;
+    if (Date.now() - entry.savedAt > LINK_PREVIEW_TTL_MS) return null;
+    return entry.preview;
+  } catch {
+    return null;
+  }
+}
+
+function cachePreviewPayload(url, preview) {
+  try {
+    const raw = localStorage.getItem(LINK_PREVIEW_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === 'object' ? parsed : {};
+    next[url] = {
+      savedAt: Date.now(),
+      preview,
+    };
+    localStorage.setItem(LINK_PREVIEW_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore cache storage failures.
+  }
 }
 
 function createExternalLink(url, label = 'Open original') {
@@ -1163,6 +1232,11 @@ async function populateLinkPreview(url, container) {
     const excerpt = document.createElement('p');
     excerpt.className = 'link-preview-excerpt';
     excerpt.textContent = excerptValue;
+    container.appendChild(excerpt);
+  } else if (!preview) {
+    const excerpt = document.createElement('p');
+    excerpt.className = 'link-preview-excerpt';
+    excerpt.textContent = 'Preview unavailable. Open the original link for details.';
     container.appendChild(excerpt);
   }
 

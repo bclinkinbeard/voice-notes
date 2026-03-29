@@ -17,8 +17,12 @@ const DB_VERSION = 4;
 const AUTO_PUSH_DELAY_MS = 1200;
 const MODE_DESCRIPTIONS = {
   capture: 'Record and save voice notes.',
-  accomplish: 'Track tasks with checkboxes and reordering.'
+  accomplish: 'Track tasks with checkboxes and reordering.',
+  links: 'Save URLs and preview each link as a card.'
 };
+const LINK_PREVIEW_ENDPOINT = '/api/link-preview';
+const LINK_PREVIEW_STORAGE_KEY = 'voice-notes-link-previews-v1';
+const LINK_PREVIEW_TTL_MS = 1000 * 60 * 60 * 24;
 
 // --- DOM References ---
 
@@ -102,6 +106,8 @@ let syncBusy = false;
 let autoPushTimer = null;
 let autoPushQueued = false;
 let textEntryBusy = false;
+const linkPreviewCache = new Map();
+let persistedLinkPreviewCacheLoaded = false;
 
 const SYNC_META_KEYS = {
   lastCloudPullAt: 'voice-notes-last-cloud-pull-at',
@@ -1060,6 +1066,195 @@ function normalizeManualNoteText(text) {
   return String(text || '').replace(/\r\n?/g, '\n').trim();
 }
 
+function extractFirstUrlCandidate(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  const markdownMatch = normalized.match(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/i);
+  if (markdownMatch && markdownMatch[1]) {
+    return markdownMatch[1];
+  }
+  const directMatch = normalized.match(/https?:\/\/[^\s<>"')]+/i);
+  if (directMatch && directMatch[0]) {
+    return directMatch[0];
+  }
+  return normalized;
+}
+
+function normalizeLinkInput(value) {
+  const extracted = extractFirstUrlCandidate(value);
+  const trimmed = String(extracted || '').trim();
+  if (!trimmed) return '';
+  const withoutTrailingPunctuation = trimmed.replace(/[),.;!?]+$/g, '');
+  if (/^https?:\/\//i.test(withoutTrailingPunctuation)) return withoutTrailingPunctuation;
+  return `https://${withoutTrailingPunctuation}`;
+}
+
+function isTweetUrl(value) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    if (host !== 'twitter.com' && host !== 'x.com') return false;
+    return /\/status\/\d+/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function buildTwitframeUrl(url) {
+  return `https://twitframe.com/show?url=${encodeURIComponent(url)}`;
+}
+
+function toHttpUrlOrNull(value) {
+  try {
+    const parsed = new URL(value);
+    return /^https?:$/i.test(parsed.protocol) ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLinkPreview(url) {
+  ensurePersistedLinkPreviewCacheLoaded();
+  if (linkPreviewCache.has(url)) {
+    return linkPreviewCache.get(url);
+  }
+
+  const request = fetch(`${LINK_PREVIEW_ENDPOINT}?url=${encodeURIComponent(url)}`)
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error('Preview unavailable');
+      }
+      return response.json();
+    })
+    .then((payload) => {
+      if (!payload || !payload.ok || !payload.preview) {
+        throw new Error('Preview unavailable');
+      }
+      cachePreviewPayload(url, payload.preview);
+      return payload.preview;
+    })
+    .catch(() => readPersistedPreview(url));
+
+  linkPreviewCache.set(url, request);
+  return request;
+}
+
+function ensurePersistedLinkPreviewCacheLoaded() {
+  if (persistedLinkPreviewCacheLoaded) return;
+  persistedLinkPreviewCacheLoaded = true;
+  try {
+    const raw = localStorage.getItem(LINK_PREVIEW_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    const now = Date.now();
+    for (const [url, entry] of Object.entries(parsed)) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (!entry.preview || !entry.savedAt || now - entry.savedAt > LINK_PREVIEW_TTL_MS) continue;
+      linkPreviewCache.set(url, Promise.resolve(entry.preview));
+    }
+  } catch {
+    // Ignore cache parse/storage failures.
+  }
+}
+
+function readPersistedPreview(url) {
+  try {
+    const raw = localStorage.getItem(LINK_PREVIEW_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const entry = parsed && parsed[url];
+    if (!entry || !entry.preview || !entry.savedAt) return null;
+    if (Date.now() - entry.savedAt > LINK_PREVIEW_TTL_MS) return null;
+    return entry.preview;
+  } catch {
+    return null;
+  }
+}
+
+function cachePreviewPayload(url, preview) {
+  try {
+    const raw = localStorage.getItem(LINK_PREVIEW_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const next = parsed && typeof parsed === 'object' ? parsed : {};
+    next[url] = {
+      savedAt: Date.now(),
+      preview,
+    };
+    localStorage.setItem(LINK_PREVIEW_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Ignore cache storage failures.
+  }
+}
+
+function createExternalLink(url, label = 'Open original') {
+  const safeUrl = toHttpUrlOrNull(url);
+  if (!safeUrl) return document.createTextNode('');
+  const anchor = document.createElement('a');
+  anchor.className = 'note-link';
+  anchor.href = safeUrl;
+  anchor.target = '_blank';
+  anchor.rel = 'noopener noreferrer';
+  anchor.textContent = label;
+  return anchor;
+}
+
+async function populateLinkPreview(url, container) {
+  const safeUrl = toHttpUrlOrNull(url);
+  if (!safeUrl) {
+    container.textContent = 'Invalid URL';
+    return;
+  }
+  if (isTweetUrl(safeUrl)) {
+    const frame = document.createElement('iframe');
+    frame.className = 'tweet-embed';
+    frame.loading = 'lazy';
+    frame.referrerPolicy = 'no-referrer-when-downgrade';
+    frame.src = buildTwitframeUrl(safeUrl);
+    frame.title = 'Embedded tweet';
+    container.replaceChildren(frame);
+    return;
+  }
+
+  const preview = await fetchLinkPreview(safeUrl);
+  container.innerHTML = '';
+
+  const title = document.createElement('a');
+  title.className = 'link-preview-title';
+  title.href = safeUrl;
+  title.target = '_blank';
+  title.rel = 'noopener noreferrer';
+  title.textContent = preview && preview.title ? preview.title : safeUrl;
+  container.appendChild(title);
+
+  const excerptValue = preview && (preview.summary || preview.description);
+  if (excerptValue) {
+    const excerpt = document.createElement('p');
+    excerpt.className = 'link-preview-excerpt';
+    excerpt.textContent = excerptValue;
+    container.appendChild(excerpt);
+  } else if (!preview) {
+    const excerpt = document.createElement('p');
+    excerpt.className = 'link-preview-excerpt';
+    excerpt.textContent = 'Preview unavailable. Open the original link for details.';
+    container.appendChild(excerpt);
+  }
+
+  const footer = document.createElement('div');
+  footer.className = 'link-preview-footer';
+  const siteText = preview && preview.siteName
+    ? preview.siteName
+    : (() => {
+      try {
+        return new URL(safeUrl).hostname;
+      } catch {
+        return 'Open link';
+      }
+    })();
+  footer.textContent = siteText;
+  container.appendChild(footer);
+}
+
 function shouldSubmitTextEntryOnEnter() {
   return !window.matchMedia('(pointer: coarse)').matches;
 }
@@ -1090,9 +1285,14 @@ async function saveEditedNote(noteId, nextText) {
 function updateEntryModeUi() {
   const hasList = Boolean(currentListId);
   const isTextMode = currentEntryMode === 'text';
+  const currentMode = listDetailMode ? listDetailMode.dataset.mode : '';
+  const isLinks = currentMode === 'links';
+  if (hasList && isLinks && !isTextMode) {
+    currentEntryMode = 'text';
+  }
 
   if (entryModeToggle) {
-    entryModeToggle.classList.toggle('hidden', !hasList);
+    entryModeToggle.classList.toggle('hidden', !hasList || isLinks);
   }
 
   if (voiceEntryBtn) {
@@ -1106,7 +1306,7 @@ function updateEntryModeUi() {
   }
 
   if (recorderEl) {
-    recorderEl.classList.toggle('hidden', !hasList || isTextMode);
+    recorderEl.classList.toggle('hidden', !hasList || isTextMode || isLinks);
   }
 
   if (textEntryPanel) {
@@ -1115,22 +1315,26 @@ function updateEntryModeUi() {
 
   if (!hasList) return;
 
-  const isAccomplish = listDetailMode && listDetailMode.dataset.mode === 'accomplish';
+  const isAccomplish = currentMode === 'accomplish';
 
   if (textNoteInput) {
-    textNoteInput.placeholder = isAccomplish ? 'Type a task' : 'Type a note';
+    textNoteInput.placeholder = isLinks
+      ? 'Paste a URL'
+      : (isAccomplish ? 'Type a task' : 'Type a note');
   }
 
   if (textEntryHint) {
     textEntryHint.textContent = shouldSubmitTextEntryOnEnter()
-      ? (isAccomplish
+      ? (isLinks
+        ? 'Press Enter to save the link. Use Shift+Enter for a line break.'
+        : (isAccomplish
         ? 'Press Enter to add the task and keep moving. Use Shift+Enter for a line break.'
-        : 'Press Enter to add another note. Use Shift+Enter for a new line.')
+        : 'Press Enter to add another note. Use Shift+Enter for a new line.'))
       : 'Use the button to add another note. Return inserts a new line on touch keyboards.';
   }
 
   if (textNoteSubmitBtn) {
-    textNoteSubmitBtn.textContent = isAccomplish ? 'Add Task' : 'Add Note';
+    textNoteSubmitBtn.textContent = isLinks ? 'Add Link' : (isAccomplish ? 'Add Task' : 'Add Note');
     textNoteSubmitBtn.disabled = textEntryBusy;
   }
 
@@ -1149,7 +1353,10 @@ async function createTextNote() {
   if (textEntryBusy || !currentListId || !textNoteInput) return false;
 
   const listIdAtCreate = currentListId;
-  const transcription = normalizeManualNoteText(textNoteInput.value);
+  const currentMode = listDetailMode ? listDetailMode.dataset.mode : '';
+  const isLinks = currentMode === 'links';
+  const rawValue = normalizeManualNoteText(textNoteInput.value);
+  const transcription = isLinks ? normalizeLinkInput(rawValue) : rawValue;
   if (!transcription) {
     focusTextEntryInput();
     return false;
@@ -1160,6 +1367,17 @@ async function createTextNote() {
   try {
     const list = await getList(listIdAtCreate);
     if (!list) return false;
+    if (list.mode === 'links') {
+      try {
+        const parsed = new URL(transcription);
+        if (!/^https?:$/i.test(parsed.protocol)) {
+          throw new Error('Only http(s) URLs are supported.');
+        }
+      } catch {
+        alert('Please enter a valid URL.');
+        return false;
+      }
+    }
 
     if (!list.noteOrder) {
       list.noteOrder = [];
@@ -1188,6 +1406,7 @@ function createNoteCard(note, list) {
   card.className = 'note-card';
   card.dataset.noteId = note.id;
   const isAccomplish = list && list.mode === 'accomplish';
+  const isLinks = list && list.mode === 'links';
   const isEditing = editingNoteId === note.id;
   if (isEditing) {
     card.classList.add('editing');
@@ -1272,6 +1491,15 @@ function createNoteCard(note, list) {
     editActions.appendChild(saveBtn);
 
     content.appendChild(editActions);
+  } else if (isLinks) {
+    const previewContainer = document.createElement('div');
+    previewContainer.className = 'link-preview loading';
+    previewContainer.textContent = 'Loading link preview…';
+    content.appendChild(previewContainer);
+    populateLinkPreview(note.transcription, previewContainer).finally(() => {
+      previewContainer.classList.remove('loading');
+    });
+    content.appendChild(createExternalLink(note.transcription));
   } else {
     const transcriptionEl = document.createElement('p');
     transcriptionEl.className = 'note-transcription';
@@ -1284,7 +1512,7 @@ function createNoteCard(note, list) {
     content.appendChild(transcriptionEl);
   }
 
-  const hasAudio = !!note.audioBlob;
+  const hasAudio = !!note.audioBlob && !isLinks;
   if (hasAudio) {
     const meta = document.createElement('div');
     meta.className = 'note-meta';
@@ -1444,7 +1672,9 @@ function createListCard(list, noteCount) {
 
   const modeBadge = document.createElement('span');
   modeBadge.className = 'list-mode-badge';
-  modeBadge.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
+  modeBadge.textContent = list.mode === 'accomplish'
+    ? 'Accomplish'
+    : (list.mode === 'links' ? 'Links' : 'Capture');
   modeBadge.dataset.mode = list.mode;
 
   const count = document.createElement('span');
@@ -1511,8 +1741,15 @@ async function renderListDetail(listId) {
   if (!list) return;
 
   listDetailName.textContent = list.name;
-  listDetailMode.textContent = list.mode === 'accomplish' ? 'Accomplish' : 'Capture';
+  listDetailMode.textContent = list.mode === 'accomplish'
+    ? 'Accomplish'
+    : (list.mode === 'links' ? 'Links' : 'Capture');
   listDetailMode.dataset.mode = list.mode;
+  if (listEmptyState) {
+    listEmptyState.textContent = list.mode === 'links'
+      ? 'No links yet. Paste a URL to save your first link.'
+      : 'No notes yet. Record one or switch to text mode.';
+  }
 
   const notes = await getNotesByList(listId);
 
@@ -1927,6 +2164,8 @@ if (textNoteInput) {
 recordBtn.addEventListener('click', async () => {
   if (recordBusy) return;
   if (!currentListId) return;
+  const activeList = await getList(currentListId);
+  if (!activeList || activeList.mode === 'links') return;
 
   try {
     recordBusy = true;

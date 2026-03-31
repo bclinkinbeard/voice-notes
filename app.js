@@ -102,6 +102,8 @@ let syncBusy = false;
 let autoPushTimer = null;
 let autoPushQueued = false;
 let textEntryBusy = false;
+const linkPreviewCache = new Map();
+const linkPreviewInflight = new Map();
 
 const SYNC_META_KEYS = {
   lastCloudPullAt: 'voice-notes-last-cloud-pull-at',
@@ -1060,6 +1062,121 @@ function normalizeManualNoteText(text) {
   return String(text || '').replace(/\r\n?/g, '\n').trim();
 }
 
+function extractSingleUrl(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  if (/\s/.test(trimmed)) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+
+  return parsed.toString();
+}
+
+function isTweetUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    if (host !== 'twitter.com' && host !== 'x.com') return false;
+    return /^\/[A-Za-z0-9_]{1,15}\/status\/\d+/.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function loadLinkPreview(url) {
+  if (!url) return null;
+  if (linkPreviewCache.has(url)) return linkPreviewCache.get(url);
+
+  if (linkPreviewInflight.has(url)) {
+    return linkPreviewInflight.get(url);
+  }
+
+  const request = fetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Preview request failed (${response.status})`);
+      const payload = await response.json();
+      if (!payload || !payload.ok) {
+        throw new Error(payload && payload.error ? payload.error : 'Preview unavailable');
+      }
+      return payload.preview || null;
+    })
+    .catch(() => null)
+    .then((preview) => {
+      linkPreviewCache.set(url, preview);
+      linkPreviewInflight.delete(url);
+      return preview;
+    });
+
+  linkPreviewInflight.set(url, request);
+  return request;
+}
+
+function ensureLinkPreview(note) {
+  const url = extractSingleUrl(note && note.transcription);
+  if (!url) return;
+  if (linkPreviewCache.has(url) || linkPreviewInflight.has(url)) return;
+
+  loadLinkPreview(url).then(() => {
+    if (currentListId === note.listId) {
+      renderListDetail(currentListId);
+    }
+  });
+}
+
+function createUrlPreviewElement(url, preview) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'link-preview';
+  if (preview && preview.type === 'tweet') {
+    wrapper.classList.add('tweet-preview');
+  }
+
+  const title = document.createElement('a');
+  title.className = 'link-preview-title';
+  title.href = url;
+  title.target = '_blank';
+  title.rel = 'noopener noreferrer';
+
+  if (preview && preview.type === 'tweet') {
+    title.textContent = preview.authorName ? `Post by ${preview.authorName}` : 'Post on X';
+  } else {
+    title.textContent = (preview && preview.title) || url;
+  }
+
+  wrapper.appendChild(title);
+
+  const excerptText = preview && preview.excerpt
+    ? preview.excerpt
+    : (preview && preview.type === 'tweet' ? 'Twitter card preview' : 'Loading preview…');
+  const excerpt = document.createElement('p');
+  excerpt.className = 'link-preview-excerpt';
+  excerpt.textContent = excerptText;
+  wrapper.appendChild(excerpt);
+
+  const meta = document.createElement('div');
+  meta.className = 'link-preview-meta';
+  if (preview && preview.type === 'tweet') {
+    meta.textContent = preview.siteName || 'X (Twitter)';
+  } else if (preview && preview.siteName) {
+    meta.textContent = preview.siteName;
+  } else if (isTweetUrl(url)) {
+    meta.textContent = 'X (Twitter)';
+  }
+  if (meta.textContent) {
+    wrapper.appendChild(meta);
+  }
+
+  return wrapper;
+}
+
 function shouldSubmitTextEntryOnEnter() {
   return !window.matchMedia('(pointer: coarse)').matches;
 }
@@ -1275,13 +1392,19 @@ function createNoteCard(note, list) {
   } else {
     const transcriptionEl = document.createElement('p');
     transcriptionEl.className = 'note-transcription';
-    if (note.transcription) {
+    const urlOnlyText = extractSingleUrl(note.transcription);
+    if (urlOnlyText) {
+      ensureLinkPreview(note);
+      const preview = linkPreviewCache.get(urlOnlyText);
+      content.appendChild(createUrlPreviewElement(urlOnlyText, preview));
+    } else if (note.transcription) {
       transcriptionEl.textContent = note.transcription;
+      content.appendChild(transcriptionEl);
     } else {
       transcriptionEl.textContent = 'No transcription available';
       transcriptionEl.classList.add('note-transcription-empty');
+      content.appendChild(transcriptionEl);
     }
-    content.appendChild(transcriptionEl);
   }
 
   const hasAudio = !!note.audioBlob;

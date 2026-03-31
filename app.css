@@ -975,6 +975,44 @@ header {
   font-style: italic;
 }
 
+.link-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.link-preview-title {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-word;
+}
+
+.link-preview-title:hover,
+.link-preview-title:focus-visible {
+  text-decoration: underline;
+}
+
+.link-preview-excerpt {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.link-preview-meta {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tweet-preview {
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+}
+
 .note-actions {
   display: flex;
   flex-direction: column;

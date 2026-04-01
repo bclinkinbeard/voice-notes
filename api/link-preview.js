@@ -59,6 +59,19 @@ function findMetaContent(html, selectors) {
   return '';
 }
 
+function findMetaContents(html, selectors) {
+  const values = [];
+  for (const selector of selectors) {
+    const regex = new RegExp(`<meta[^>]+${selector}[^>]+content=["']([^"']+)["'][^>]*>`, 'gi');
+    for (const match of html.matchAll(regex)) {
+      if (match && match[1]) {
+        values.push(decodeHtml(match[1]));
+      }
+    }
+  }
+  return values;
+}
+
 function findTitle(html) {
   const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   return match ? decodeHtml(match[1]) : '';
@@ -84,13 +97,23 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_M
 
 async function buildTweetPreview(url) {
   const endpoint = `${TWITTER_OEMBED_ENDPOINT}?omit_script=1&dnt=1&url=${encodeURIComponent(url)}`;
-  const response = await fetchWithTimeout(endpoint, { headers: { accept: 'application/json' } });
-  if (!response.ok) {
-    throw new Error(`Twitter oEmbed failed (${response.status})`);
+  const [oembedResponse, tweetResponse] = await Promise.all([
+    fetchWithTimeout(endpoint, { headers: { accept: 'application/json' } }),
+    fetchWithTimeout(url, { redirect: 'follow' }),
+  ]);
+
+  if (!oembedResponse.ok) {
+    throw new Error(`Twitter oEmbed failed (${oembedResponse.status})`);
   }
 
-  const payload = await response.json();
+  const payload = await oembedResponse.json();
+  const tweetHtml = tweetResponse.ok ? await tweetResponse.text() : '';
   const excerpt = clipText(stripHtml(payload.html));
+  const videoCandidates = findMetaContents(tweetHtml, ['property=["\']og:video:url["\']', 'name=["\']twitter:player:stream["\']']);
+  const imageCandidates = findMetaContents(tweetHtml, ['property=["\']og:image["\']', 'name=["\']twitter:image["\']']);
+  const mediaUrl = videoCandidates[0] || imageCandidates[0] || '';
+  const mediaType = videoCandidates[0] ? 'video' : (imageCandidates[0] ? 'image' : '');
+  const mediaAlt = findMetaContent(tweetHtml, ['name=["\']twitter:image:alt["\']']) || '';
 
   return {
     type: 'tweet',
@@ -100,6 +123,9 @@ async function buildTweetPreview(url) {
     siteName: 'X (Twitter)',
     authorName: payload.author_name || '',
     authorUrl: payload.author_url || '',
+    mediaUrl,
+    mediaType,
+    mediaAlt,
   };
 }
 

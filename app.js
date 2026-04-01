@@ -1161,6 +1161,26 @@ function createUrlPreviewElement(url, preview) {
   excerpt.textContent = excerptText;
   wrapper.appendChild(excerpt);
 
+  if (preview && preview.type === 'tweet' && preview.mediaUrl) {
+    if (preview.mediaType === 'video') {
+      const video = document.createElement('video');
+      video.className = 'link-preview-media';
+      video.src = preview.mediaUrl;
+      video.controls = true;
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      wrapper.appendChild(video);
+    } else {
+      const image = document.createElement('img');
+      image.className = 'link-preview-media';
+      image.src = preview.mediaUrl;
+      image.alt = preview.mediaAlt || 'Tweet media';
+      image.loading = 'lazy';
+      wrapper.appendChild(image);
+    }
+  }
+
   const meta = document.createElement('div');
   meta.className = 'link-preview-meta';
   if (preview && preview.type === 'tweet') {

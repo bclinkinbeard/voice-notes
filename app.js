@@ -1285,17 +1285,15 @@ function createNoteCard(note, list) {
   }
 
   const hasAudio = !!note.audioBlob;
-  if (hasAudio) {
-    const meta = document.createElement('div');
-    meta.className = 'note-meta';
-    const metaParts = [];
-    if (note.duration > 0) {
-      metaParts.unshift(formatDuration(note.duration));
-    }
-    metaParts.push(formatDate(note.createdAt));
-    meta.textContent = metaParts.join(' \u00B7 ');
-    content.appendChild(meta);
+  const meta = document.createElement('div');
+  meta.className = 'note-meta';
+  const metaParts = [];
+  if (hasAudio && note.duration > 0) {
+    metaParts.push(formatDuration(note.duration));
   }
+  metaParts.push(formatDate(note.createdAt));
+  meta.textContent = metaParts.join(' \u00B7 ');
+  content.appendChild(meta);
 
   let progressFill = null;
   if (hasAudio) {

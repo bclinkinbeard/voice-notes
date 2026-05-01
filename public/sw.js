@@ -1,4 +1,4 @@
-const CACHE_NAME = 'voice-notes-v29';
+const CACHE_NAME = 'voice-notes-v30';
 const SHELL = [
   './',
   './app.css',
@@ -42,15 +42,16 @@ self.addEventListener('fetch', (e) => {
 
   e.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
+    const isNavigation = e.request.mode === 'navigate';
 
     try {
       const response = await fetch(e.request);
       if (response && response.ok) {
-        cache.put(e.request, response.clone());
+        cache.put(isNavigation ? './' : e.request, response.clone());
       }
       return response;
     } catch (error) {
-      const cached = await cache.match(e.request);
+      const cached = await cache.match(isNavigation ? './' : e.request);
       if (cached) {
         return cached;
       }

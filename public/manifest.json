@@ -3,9 +3,40 @@
   "short_name": "Voice Notes",
   "description": "Offline voice notes — record, save, and play back anytime.",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#1a1a2e",
+  "shortcuts": [
+    {
+      "name": "Record Note",
+      "short_name": "Record",
+      "description": "Open straight into voice capture.",
+      "url": "./?intent=record&entry=voice&list=default",
+      "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    },
+    {
+      "name": "Type Note",
+      "short_name": "Type",
+      "description": "Open straight into text entry.",
+      "url": "./?intent=text&entry=text&list=default",
+      "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "./?share-target=1",
+    "method": "GET",
+    "enctype": "application/x-www-form-urlencoded",
+    "params": {
+      "title": "share-title",
+      "text": "share-text",
+      "url": "share-url"
+    }
+  },
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
